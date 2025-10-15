@@ -37,9 +37,10 @@ export default function Login() {
     try {
       await signIn(data.email, data.password);
       toast.success('Login realizado com sucesso!');
-    } catch (error: any) {
+    } catch (error) {
       console.error('Login error:', error);
-      toast.error(error.message || 'Erro ao fazer login. Verifique suas credenciais.');
+      const message = error instanceof Error ? error.message : 'Erro ao fazer login. Verifique suas credenciais.';
+      toast.error(message);
     } finally {
       setLoading(false);
     }

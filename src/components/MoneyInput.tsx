@@ -21,8 +21,10 @@ export function MoneyInput({
 
   useEffect(() => {
     if (value === 0 && displayValue === '') return;
-    setDisplayValue(formatCurrency(value));
-  }, [value]);
+    const formattedValue = formatCurrency(value);
+    if (displayValue === formattedValue) return;
+    setDisplayValue(formattedValue);
+  }, [value, displayValue]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const inputValue = e.target.value;

@@ -8,6 +8,7 @@ import { ProtectedRoute } from "./components/ProtectedRoute";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import NotFound from "./pages/NotFound";
+import CashBoxNew from "./pages/CashBoxNew";
 
 const queryClient = new QueryClient();
 
@@ -25,6 +26,14 @@ const App = () => (
               element={
                 <ProtectedRoute requireRole="vistoriador">
                   <Dashboard />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/caixas/novo"
+              element={
+                <ProtectedRoute requireRole="vistoriador">
+                  <CashBoxNew />
                 </ProtectedRoute>
               }
             />

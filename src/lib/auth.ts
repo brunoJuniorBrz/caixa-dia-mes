@@ -32,7 +32,8 @@ export async function getCurrentAppUser(): Promise<AppUser | null> {
     .select('*')
     .eq('auth_user_id', user.id)
     .eq('is_active', true)
-    .single();
+    .limit(1)
+    .maybeSingle();
 
   if (error || !data) return null;
   return data as AppUser;

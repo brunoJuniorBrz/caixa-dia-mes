@@ -8,16 +8,33 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { formatCurrency } from '@/lib/money';
 import { formatDate, getTodayISO } from '@/lib/date';
 import { Plus, DollarSign, CreditCard, TrendingDown, TrendingUp, RotateCcw, LogOut } from 'lucide-react';
-import type { CashBox, CashBoxSummary } from '@/types/database';
+import type {
+  CashBox,
+  CashBoxSummary,
+  CashBoxService,
+  CashBoxElectronicEntry,
+  CashBoxExpense,
+  ServiceType,
+} from '@/types/database';
+
+interface CashBoxServiceWithType extends CashBoxService {
+  service_types?: ServiceType | null;
+}
+
+interface CashBoxWithRelations extends CashBox {
+  cash_box_services: CashBoxServiceWithType[] | null;
+  cash_box_electronic_entries: CashBoxElectronicEntry[] | null;
+  cash_box_expenses: CashBoxExpense[] | null;
+}
 
 export default function Dashboard() {
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
   const [selectedDate, setSelectedDate] = useState(getTodayISO());
 
-  const { data: cashBoxes, isLoading } = useQuery({
+  const { data: cashBoxes = [], isLoading } = useQuery<CashBoxWithRelations[]>({
     queryKey: ['cash-boxes', user?.store_id, selectedDate],
-    queryFn: async () => {
+    queryFn: async (): Promise<CashBoxWithRelations[]> => {
       if (!user?.store_id) return [];
       
       const { data, error } = await supabase
@@ -34,41 +51,53 @@ export default function Dashboard() {
         .limit(5);
 
       if (error) throw error;
-      return data as any[];
+      return (data ?? []) as CashBoxWithRelations[];
     },
     enabled: !!user?.store_id,
   });
 
-  const summary: CashBoxSummary = (cashBoxes || []).reduce(
-    (acc, box) => {
-      const grossServices = box.cash_box_services?.filter(
-        (s: any) => s.service_types?.counts_in_gross
-      ) || [];
-      const gross = grossServices.reduce((sum: number, s: any) => sum + s.total_cents, 0);
+  const summary: CashBoxSummary = cashBoxes.reduce<CashBoxSummary>(
+    (accumulator, box) => {
+      const services = box.cash_box_services ?? [];
+      const electronicEntries = box.cash_box_electronic_entries ?? [];
+      const expenses = box.cash_box_expenses ?? [];
 
-      const returnServices = box.cash_box_services?.filter(
-        (s: any) => !s.service_types?.counts_in_gross
-      ) || [];
-      const returnCount = returnServices.reduce((sum: number, s: any) => sum + s.quantity, 0);
+      const grossServices = services.filter(
+        (service) => service.service_types?.counts_in_gross,
+      );
+      const gross = grossServices.reduce(
+        (total, service) => total + (service.total_cents ?? service.unit_price_cents * service.quantity),
+        0,
+      );
 
-      const pix = box.cash_box_electronic_entries
-        ?.filter((e: any) => e.method === 'pix')
-        .reduce((sum: number, e: any) => sum + e.amount_cents, 0) || 0;
+      const returnServices = services.filter(
+        (service) => service.service_types && !service.service_types.counts_in_gross,
+      );
+      const returnCount = returnServices.reduce(
+        (total, service) => total + service.quantity,
+        0,
+      );
 
-      const cartao = box.cash_box_electronic_entries
-        ?.filter((e: any) => e.method === 'cartao')
-        .reduce((sum: number, e: any) => sum + e.amount_cents, 0) || 0;
+      const pix = electronicEntries
+        .filter((entry) => entry.method === 'pix')
+        .reduce((total, entry) => total + entry.amount_cents, 0);
 
-      const expenses = box.cash_box_expenses
-        ?.reduce((sum: number, e: any) => sum + e.amount_cents, 0) || 0;
+      const cartao = electronicEntries
+        .filter((entry) => entry.method === 'cartao')
+        .reduce((total, entry) => total + entry.amount_cents, 0);
+
+      const expensesTotal = expenses.reduce(
+        (total, expense) => total + expense.amount_cents,
+        0,
+      );
 
       return {
-        gross_total: acc.gross_total + gross,
-        pix_total: acc.pix_total + pix,
-        cartao_total: acc.cartao_total + cartao,
-        expenses_total: acc.expenses_total + expenses,
-        net_total: acc.net_total + (gross - expenses),
-        return_count: acc.return_count + returnCount,
+        gross_total: accumulator.gross_total + gross,
+        pix_total: accumulator.pix_total + pix,
+        cartao_total: accumulator.cartao_total + cartao,
+        expenses_total: accumulator.expenses_total + expensesTotal,
+        net_total: accumulator.net_total + (gross - expensesTotal),
+        return_count: accumulator.return_count + returnCount,
       };
     },
     {
@@ -78,7 +107,7 @@ export default function Dashboard() {
       expenses_total: 0,
       net_total: 0,
       return_count: 0,
-    }
+    },
   );
 
   if (isLoading) {
@@ -229,7 +258,7 @@ export default function Dashboard() {
                     </div>
                     <div className="text-right">
                       <p className="text-sm text-muted-foreground">
-                        {box.cash_box_services?.length || 0} serviços
+                        {box.cash_box_services?.length ?? 0} serviços
                       </p>
                     </div>
                   </div>
