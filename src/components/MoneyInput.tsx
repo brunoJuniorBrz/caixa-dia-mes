@@ -1,54 +1,90 @@
 import { Input } from '@/components/ui/input';
-import { formatCurrency, parseCurrency } from '@/lib/money';
-import { useState, useEffect } from 'react';
+import type { ComponentProps } from 'react';
+import { useEffect, useState } from 'react';
 
-interface MoneyInputProps {
+interface MoneyInputProps extends Omit<ComponentProps<typeof Input>, 'value' | 'onChange'> {
   value: number;
   onChange: (value: number) => void;
-  placeholder?: string;
-  disabled?: boolean;
-  className?: string;
 }
 
 export function MoneyInput({
   value,
   onChange,
-  placeholder = 'R$ 0,00',
-  disabled,
-  className,
+  placeholder = '0,00',
+  ...props
 }: MoneyInputProps) {
-  const [displayValue, setDisplayValue] = useState('');
+  const [isFocused, setIsFocused] = useState(false);
+  const [inputValue, setInputValue] = useState('');
 
   useEffect(() => {
-    if (value === 0 && displayValue === '') return;
-    const formattedValue = formatCurrency(value);
-    if (displayValue === formattedValue) return;
-    setDisplayValue(formattedValue);
-  }, [value, displayValue]);
+    if (isFocused) return;
+    if (!value) {
+      setInputValue('');
+      return;
+    }
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const inputValue = e.target.value;
-    setDisplayValue(inputValue);
+    setInputValue(formatCents(value));
+  }, [value, isFocused]);
 
-    const cents = parseCurrency(inputValue);
+  const handleChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const sanitized = sanitizeValue(event.target.value);
+    if (sanitized === null) return;
+
+    setInputValue(sanitized);
+
+    const cents = parseCents(sanitized);
     onChange(cents);
   };
 
   const handleBlur = () => {
-    if (displayValue) {
-      setDisplayValue(formatCurrency(parseCurrency(displayValue)));
+    setIsFocused(false);
+
+    if (!inputValue) {
+      onChange(0);
+      setInputValue('');
+      return;
     }
+
+    const cents = parseCents(inputValue);
+    onChange(cents);
+    setInputValue(formatCents(cents));
+  };
+
+  const handleFocus = () => {
+    setIsFocused(true);
   };
 
   return (
     <Input
       type="text"
-      value={displayValue}
+      inputMode="decimal"
+      value={inputValue}
       onChange={handleChange}
+      onFocus={handleFocus}
       onBlur={handleBlur}
       placeholder={placeholder}
-      disabled={disabled}
-      className={className}
+      {...props}
     />
   );
+}
+
+function sanitizeValue(value: string): string | null {
+  const sanitized = value.replace(/[^0-9.,]/g, '');
+  if (!/^\d*(?:[.,]\d{0,2})?$/.test(sanitized)) {
+    return null;
+  }
+  return sanitized;
+}
+
+function parseCents(value: string): number {
+  const normalized = value.replace(/\./g, '').replace(',', '.');
+  const numeric = Number.parseFloat(normalized);
+  if (Number.isNaN(numeric)) {
+    return 0;
+  }
+  return Math.round(numeric * 100);
+}
+
+function formatCents(value: number): string {
+  return (value / 100).toFixed(2).replace('.', ',');
 }

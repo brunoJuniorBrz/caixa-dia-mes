@@ -1,21 +1,26 @@
 import { useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { CashBoxForm } from '@/features/cash-box/components/CashBoxForm';
 
-export default function CashBoxNew() {
+export default function CashBoxEdit() {
+  const { id } = useParams<{ id: string }>();
   const { user } = useAuth();
   const navigate = useNavigate();
 
   useEffect(() => {
+    if (!id) {
+      navigate('/dashboard', { replace: true });
+      return;
+    }
     if (user && user.role !== 'vistoriador' && user.role !== 'admin') {
       navigate('/dashboard', { replace: true });
     }
-  }, [user, navigate]);
+  }, [id, user, navigate]);
 
-  if (user && user.role !== 'vistoriador' && user.role !== 'admin') {
+  if (!id || (user && user.role !== 'vistoriador' && user.role !== 'admin')) {
     return null;
   }
 
-  return <CashBoxForm mode="create" />;
+  return <CashBoxForm mode="edit" cashBoxId={id} />;
 }

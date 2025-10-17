@@ -9,6 +9,8 @@ import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import NotFound from "./pages/NotFound";
 import CashBoxNew from "./pages/CashBoxNew";
+import CashBoxEdit from "./pages/CashBoxEdit";
+import AdminDashboard from "./pages/AdminDashboard";
 
 const queryClient = new QueryClient();
 
@@ -37,7 +39,23 @@ const App = () => (
                 </ProtectedRoute>
               }
             />
+            <Route
+              path="/caixas/:id"
+              element={
+                <ProtectedRoute requireRole="vistoriador">
+                  <CashBoxEdit />
+                </ProtectedRoute>
+              }
+            />
             <Route path="/" element={<Navigate to="/login" replace />} />
+            <Route
+              path="/admin"
+              element={
+                <ProtectedRoute requireRole="admin">
+                  <AdminDashboard />
+                </ProtectedRoute>
+              }
+            />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </TooltipProvider>
