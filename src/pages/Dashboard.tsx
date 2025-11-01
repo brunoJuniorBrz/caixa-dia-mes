@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/useAuth';
@@ -126,10 +126,16 @@ function computeBoxTotals(box: CashBoxWithRelations) {
 export default function Dashboard() {
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
-  const [selectedDate, setSelectedDate] = useState(getTodayISO());
+  const [startDate, setStartDate] = useState(getTodayISO());
+  const [endDate, setEndDate] = useState(getTodayISO());
+  const [cashBoxSearch, setCashBoxSearch] = useState('');
+  const [receivableSearch, setReceivableSearch] = useState('');
+  const deferredCashSearch = useDeferredValue(cashBoxSearch);
+  const deferredReceivableSearch = useDeferredValue(receivableSearch);
   const queryClient = useQueryClient();
   const isAdmin = user?.role === 'admin';
   const isVistoriador = user?.role === 'vistoriador';
+  const isDateRangeValid = useMemo(() => startDate <= endDate, [startDate, endDate]);
 
   const [editingReceivable, setEditingReceivable] = useState<ReceivableWithRelations | null>(null);
   const [editForm, setEditForm] = useState({
@@ -163,11 +169,16 @@ export default function Dashboard() {
       });
     }
   }, [editingReceivable]);
-  const { data: cashBoxes = [], isLoading } = useQuery<CashBoxWithRelations[]>({
-    queryKey: ['cash-boxes', user?.store_id, selectedDate],
+  const [shouldFetch, setShouldFetch] = useState(true);
+  const {
+    data: cashBoxesData = [],
+    isLoading,
+    isFetching,
+  } = useQuery<CashBoxWithRelations[]>({
+    queryKey: ['cash-boxes', user?.store_id, startDate, endDate],
     queryFn: async (): Promise<CashBoxWithRelations[]> => {
       if (!user?.store_id) return [];
-      
+
       const { data, error } = await supabase
         .from('cash_boxes')
         .select(`
@@ -177,15 +188,20 @@ export default function Dashboard() {
           cash_box_expenses(*)
         `)
         .eq('store_id', user.store_id)
-        .eq('date', selectedDate)
+        .gte('date', startDate)
+        .lte('date', endDate)
+        .order('date', { ascending: false })
         .order('created_at', { ascending: false })
-        .limit(5);
+        .limit(50);
 
       if (error) throw error;
       return (data ?? []) as CashBoxWithRelations[];
     },
-    enabled: !!user?.store_id,
+    enabled: !!user?.store_id && isDateRangeValid && shouldFetch,
+    onSuccess: () => setShouldFetch(false),
+    onError: () => setShouldFetch(false),
   });
+  const cashBoxes = isDateRangeValid ? cashBoxesData : [];
 
   const { data: serviceTypes = [] } = useQuery<ServiceType[]>({
     queryKey: ['service-types'],
@@ -275,13 +291,78 @@ export default function Dashboard() {
     },
   );
 
-  const serviceTypeMap = new Map(serviceTypes.map((service) => [service.id, service]));
+  const serviceTypeMap = useMemo(() => new Map(serviceTypes.map((service) => [service.id, service])), [serviceTypes]);
   const statusStyles: Record<Receivable['status'], { label: string; badgeClass: string }> = {
     aberto: { label: 'Aberto', badgeClass: 'bg-amber-100 text-amber-800' },
     pago_pendente_baixa: { label: 'Pago (pendente baixa)', badgeClass: 'bg-blue-100 text-blue-800' },
     baixado: { label: 'Baixado', badgeClass: 'bg-emerald-100 text-emerald-800' },
   };
-  const visibleReceivables = receivables.filter((receivable) => receivable.status !== 'baixado');
+  const activeReceivables = useMemo(
+    () => receivables.filter((receivable) => receivable.status !== 'baixado'),
+    [receivables],
+  );
+  const filteredCashBoxes = useMemo(() => {
+    const term = deferredCashSearch.trim().toLowerCase();
+    if (!term) return cashBoxes;
+    return cashBoxes.filter((box) => {
+      const values: string[] = [
+        formatDate(box.date).toLowerCase(),
+        box.note?.toLowerCase() ?? '',
+      ];
+
+      const serviceNames = (box.cash_box_services ?? [])
+        .map((service) => service.service_types?.name?.toLowerCase() ?? service.service_types?.code?.toLowerCase() ?? '')
+        .filter(Boolean)
+        .join(' ');
+      if (serviceNames) values.push(serviceNames);
+
+      const expenseTitles = (box.cash_box_expenses ?? [])
+        .map((expense) => expense.title.toLowerCase())
+        .join(' ');
+      if (expenseTitles) values.push(expenseTitles);
+
+      return values.some((value) => value.includes(term));
+    });
+  }, [cashBoxes, deferredCashSearch]);
+
+  const filteredReceivables = useMemo(() => {
+    const term = deferredReceivableSearch.trim().toLowerCase();
+    if (!term) return activeReceivables;
+    return activeReceivables.filter((receivable) => {
+      const serviceName = receivable.service_type_id
+        ? serviceTypeMap.get(receivable.service_type_id)?.name ?? ''
+        : '';
+      const latestPayment = receivable.receivable_payments?.[0];
+
+      const fields = [
+        receivable.customer_name,
+        receivable.plate ?? '',
+        serviceName,
+        statusStyles[receivable.status].label,
+        formatCurrency(receivable.original_amount_cents ?? 0),
+      ];
+
+      if (receivable.due_date) {
+        fields.push(formatDate(receivable.due_date));
+      }
+
+      if (latestPayment) {
+        fields.push(formatDate(latestPayment.paid_on));
+        fields.push(formatCurrency(latestPayment.amount_cents));
+      }
+
+      return fields.some((field) => field.toLowerCase().includes(term));
+    });
+  }, [activeReceivables, deferredReceivableSearch, serviceTypeMap]);
+
+  const hasCashBoxSearch = deferredCashSearch.trim().length > 0;
+  const hasReceivableSearch = deferredReceivableSearch.trim().length > 0;
+  const totalReceivablesCount = activeReceivables.length;
+  const filteredReceivablesCount = filteredReceivables.length;
+  const receivablesBadgeLabel =
+    totalReceivablesCount === filteredReceivablesCount
+      ? `${filteredReceivablesCount} registros`
+      : `${filteredReceivablesCount} de ${totalReceivablesCount} registros`;
 
   const invalidateReceivables = () => {
     queryClient.invalidateQueries({ queryKey: ['receivables', user?.store_id, user?.role] });
@@ -293,7 +374,7 @@ export default function Dashboard() {
       if (error) throw error;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['cash-boxes', user?.store_id, selectedDate] });
+      queryClient.invalidateQueries({ queryKey: ['cash-boxes', user?.store_id, startDate, endDate] });
       toast.success('Caixa excluído.');
       setCashBoxToDelete(null);
     },
@@ -389,7 +470,9 @@ export default function Dashboard() {
     }
   };
 
-  if (isLoading) {
+  const isInitialLoading = isLoading && cashBoxes.length === 0;
+
+  if (isInitialLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <div className="text-center">
@@ -422,16 +505,67 @@ export default function Dashboard() {
         {/* Date Selector */}
         <Card>
           <CardHeader>
-            <CardTitle>Selecionar Data</CardTitle>
+            <CardTitle>Período de Caixa</CardTitle>
           </CardHeader>
-          <CardContent>
-            <input
-              type="date"
-              value={selectedDate}
-              onChange={(e) => setSelectedDate(e.target.value)}
-              className="rounded-md border border-input bg-background px-3 py-2"
-            />
+          <CardContent className="flex flex-col gap-4 md:flex-row md:items-end md:gap-6">
+            <div className="flex w-full flex-col gap-2 md:w-auto">
+              <Label className="text-sm font-medium text-slate-700">Data inicial</Label>
+              <input
+                type="date"
+                value={startDate}
+                max={endDate}
+                onChange={(event) => {
+                  setStartDate(event.target.value);
+                  setShouldFetch(false);
+                }}
+                className="rounded-md border border-input bg-background px-3 py-2"
+              />
+            </div>
+            <div className="flex w-full flex-col gap-2 md:w-auto">
+              <Label className="text-sm font-medium text-slate-700">Data final</Label>
+              <input
+                type="date"
+                value={endDate}
+                min={startDate}
+                onChange={(event) => {
+                  setEndDate(event.target.value);
+                  setShouldFetch(false);
+                }}
+                className="rounded-md border border-input bg-background px-3 py-2"
+              />
+            </div>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  const today = getTodayISO();
+                  setStartDate(today);
+                  setEndDate(today);
+                  setShouldFetch(true);
+                }}
+              >
+                Hoje
+              </Button>
+              <Button
+                onClick={() => {
+                  if (!user?.store_id || !isDateRangeValid) return;
+                  setShouldFetch(true);
+                  queryClient.invalidateQueries({
+                    queryKey: ['cash-boxes', user?.store_id, startDate, endDate],
+                    exact: true,
+                  });
+                }}
+                disabled={!isDateRangeValid || isFetching}
+              >
+                {isFetching ? 'Buscando...' : 'Buscar'}
+              </Button>
+            </div>
           </CardContent>
+          {!isDateRangeValid && (
+            <p className="px-6 pb-4 text-sm text-destructive">
+              A data inicial deve ser menor ou igual à data final.
+            </p>
+          )}
         </Card>
 
         {/* Summary Cards */}
@@ -517,92 +651,103 @@ export default function Dashboard() {
 
         {/* Recent Cash Boxes */}
         <Card>
-          <CardHeader>
+          <CardHeader className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <CardTitle>Últimos Caixas do Dia</CardTitle>
+            <Input
+              value={cashBoxSearch}
+              onChange={(event) => setCashBoxSearch(event.target.value)}
+              placeholder="Buscar por nota, serviço ou despesa"
+              aria-label="Buscar caixas"
+              className="md:w-72"
+            />
           </CardHeader>
-            <CardContent>
-              {cashBoxes && cashBoxes.length > 0 ? (
-                <div className="space-y-2">
-                  {cashBoxes.map((box) => {
-                    const totals = computeBoxTotals(box);
-                    const isDeletingCurrent = deleteCashBoxMutation.isPending && cashBoxToDelete?.id === box.id;
-                    return (
-                      <div
-                        key={box.id}
-                        onClick={() => navigate(`/caixas/${box.id}`)}
-                        className="flex flex-col gap-3 rounded-lg border p-4 hover:bg-accent cursor-pointer transition-colors"
-                      >
-                        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                          <div className="space-y-1">
-                            <p className="font-medium text-slate-900">{formatDate(box.date)}</p>
-                            {box.note && (
-                              <p className="text-sm text-muted-foreground">{box.note}</p>
-                            )}
-                            <p className="text-xs text-muted-foreground">
-                              {box.cash_box_services?.length ?? 0} serviços • {box.cash_box_expenses?.length ?? 0}{' '}
-                              despesas • Retornos {totals.returnCount}
+          <CardContent>
+            {isLoading ? (
+              <div className="flex items-center justify-center py-6 text-sm text-muted-foreground">
+                Carregando caixas...
+              </div>
+            ) : filteredCashBoxes.length > 0 ? (
+              <div className="space-y-2">
+                {filteredCashBoxes.map((box) => {
+                  const totals = computeBoxTotals(box);
+                  const isDeletingCurrent = deleteCashBoxMutation.isPending && cashBoxToDelete?.id === box.id;
+                  return (
+                    <div
+                      key={box.id}
+                      onClick={() => navigate(`/caixas/${box.id}`)}
+                      className="flex flex-col gap-3 rounded-lg border p-4 hover:bg-accent cursor-pointer transition-colors"
+                    >
+                      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                        <div className="space-y-1">
+                          <p className="font-medium text-slate-900">{formatDate(box.date)}</p>
+                          {box.note && (
+                            <p className="text-sm text-muted-foreground">{box.note}</p>
+                          )}
+                          <p className="text-xs text-muted-foreground">
+                            {box.cash_box_services?.length ?? 0} serviços · {box.cash_box_expenses?.length ?? 0}{' '}
+                            despesas · Retornos {totals.returnCount}
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+                          <div>
+                            <p className="uppercase tracking-wide text-[10px]">Bruto</p>
+                            <p className="font-semibold text-slate-900">{formatCurrency(totals.gross)}</p>
+                          </div>
+                          <div>
+                            <p className="uppercase tracking-wide text-[10px]">Líquido</p>
+                            <p className="font-semibold text-slate-900">{formatCurrency(totals.net)}</p>
+                          </div>
+                          <div>
+                            <p className="uppercase tracking-wide text-[10px]">PIX</p>
+                            <p className="font-semibold text-slate-900">{formatCurrency(totals.pix)}</p>
+                          </div>
+                          <div>
+                            <p className="uppercase tracking-wide text-[10px]">Cartão</p>
+                            <p className="font-semibold text-slate-900">{formatCurrency(totals.cartao)}</p>
+                          </div>
+                          <div>
+                            <p className="uppercase tracking-wide text-[10px]">Despesas</p>
+                            <p className="font-semibold text-slate-900 text-destructive">
+                              {formatCurrency(totals.expenses)}
                             </p>
                           </div>
-                          <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
-                            <div>
-                              <p className="uppercase tracking-wide text-[10px]">Bruto</p>
-                              <p className="font-semibold text-slate-900">{formatCurrency(totals.gross)}</p>
-                            </div>
-                            <div>
-                              <p className="uppercase tracking-wide text-[10px]">Líquido</p>
-                              <p className="font-semibold text-slate-900">{formatCurrency(totals.net)}</p>
-                            </div>
-                            <div>
-                              <p className="uppercase tracking-wide text-[10px]">PIX</p>
-                              <p className="font-semibold text-slate-900">{formatCurrency(totals.pix)}</p>
-                            </div>
-                            <div>
-                              <p className="uppercase tracking-wide text-[10px]">Cartão</p>
-                              <p className="font-semibold text-slate-900">{formatCurrency(totals.cartao)}</p>
-                            </div>
-                            <div>
-                              <p className="uppercase tracking-wide text-[10px]">Despesas</p>
-                              <p className="font-semibold text-slate-900 text-destructive">
-                                {formatCurrency(totals.expenses)}
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              navigate(`/caixas/${box.id}`);
-                            }}
-                          >
-                            <PenSquare className="mr-1 h-4 w-4" />
-                            Editar
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="text-destructive hover:text-destructive"
-                            disabled={isDeletingCurrent}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              setCashBoxToDelete(box);
-                            }}
-                          >
-                            <Trash2 className="mr-1 h-4 w-4" />
-                            Excluir
-                          </Button>
                         </div>
                       </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <p className="text-center text-muted-foreground py-8">
-                  Nenhum caixa registrado para esta data
-                </p>
-        )}
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            navigate(`/caixas/${box.id}`);
+                          }}
+                        >
+                          <PenSquare className="mr-1 h-4 w-4" />
+                          Editar
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-destructive hover:text-destructive"
+                          disabled={isDeletingCurrent}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setCashBoxToDelete(box);
+                          }}
+                        >
+                          <Trash2 className="mr-1 h-4 w-4" />
+                          Excluir
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="py-8 text-center text-muted-foreground">
+                {hasCashBoxSearch ? "Nenhum caixa encontrado para a busca." : "Nenhum caixa registrado para esta data"}
+              </p>
+            )}
           </CardContent>
         </Card>
 
@@ -614,18 +759,27 @@ export default function Dashboard() {
                 Clientes com pagamento pendente. Registre pagamentos para atualizar o status.
               </p>
             </div>
-            <Badge variant="outline" className="text-xs uppercase tracking-wide">
-              {visibleReceivables.length} registros
-            </Badge>
+            <div className="flex w-full flex-col items-start gap-2 md:w-auto md:flex-row md:items-center md:gap-3">
+              <Input
+                value={receivableSearch}
+                onChange={(event) => setReceivableSearch(event.target.value)}
+                placeholder="Buscar por cliente, placa ou serviço"
+                aria-label="Buscar recebíveis"
+                className="md:w-72"
+              />
+              <Badge variant="outline" className="text-xs uppercase tracking-wide">
+                {receivablesBadgeLabel}
+              </Badge>
+            </div>
           </CardHeader>
           <CardContent>
             {isLoadingReceivables ? (
               <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
                 Carregando recebiveis...
               </div>
-            ) : visibleReceivables.length === 0 ? (
+            ) : filteredReceivables.length === 0 ? (
               <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
-                Nenhum recebivel cadastrado
+                {hasReceivableSearch ? 'Nenhum recebível encontrado para a busca.' : 'Nenhum recebível cadastrado'}
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -643,7 +797,7 @@ export default function Dashboard() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {visibleReceivables.map((receivable) => {
+                    {filteredReceivables.map((receivable) => {
                       const statusInfo = statusStyles[receivable.status];
                       const serviceName = receivable.service_type_id
                         ? serviceTypeMap.get(receivable.service_type_id)?.name ?? 'Servico'

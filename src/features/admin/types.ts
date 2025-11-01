@@ -59,3 +59,34 @@ export interface VariableExpenseRecord {
     vistoriador?: AppUser | null;
   };
 }
+
+export interface MonthlyClosureServiceEntry {
+  service_type_id: string;
+  quantity: number;
+  unit_price_cents: number;
+}
+
+export interface MonthlyClosureExpenseEntry {
+  id?: string;
+  title: string;
+  amount_cents: number;
+}
+
+export interface MonthlyClosureData {
+  cashBoxId: string | null;
+  month: string;
+  services: MonthlyClosureServiceEntry[];
+  expenses: MonthlyClosureExpenseEntry[];
+  serviceCatalog: ServiceType[];
+}
+
+export interface MonthlyClosurePayload {
+  storeId: string;
+  month: string;
+  userId: string;
+  services: Array<{
+    service_type_id: string;
+    quantity: number;
+  }>;
+  expenses: MonthlyClosureExpenseEntry[];
+}

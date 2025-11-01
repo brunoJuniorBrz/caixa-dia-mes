@@ -11,6 +11,7 @@ import NotFound from "./pages/NotFound";
 import CashBoxNew from "./pages/CashBoxNew";
 import CashBoxEdit from "./pages/CashBoxEdit";
 import AdminDashboard from "./pages/AdminDashboard";
+import AdminMonthlyClosure from "./pages/AdminMonthlyClosure";
 
 const queryClient = new QueryClient();
 
@@ -53,6 +54,14 @@ const App = () => (
               element={
                 <ProtectedRoute requireRole="admin">
                   <AdminDashboard />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/fechamento"
+              element={
+                <ProtectedRoute requireRole="admin">
+                  <AdminMonthlyClosure />
                 </ProtectedRoute>
               }
             />

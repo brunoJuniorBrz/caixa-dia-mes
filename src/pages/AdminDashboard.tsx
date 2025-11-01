@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { addDays, formatISO, subDays } from 'date-fns';
 import { toast } from 'sonner';
@@ -18,6 +19,7 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -27,7 +29,8 @@ import { formatCurrency } from '@/lib/money';
 import { formatDate } from '@/lib/date';
 import { useForm, Controller } from 'react-hook-form';
 import type { SubmitHandler } from 'react-hook-form';
-import { Loader2, Edit, Plus, Trash2 } from 'lucide-react';
+import { Loader2, Edit, Plus, Trash2, LogOut, Search, CheckCircle, BadgeCheck, Calendar } from 'lucide-react';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
   fetchStores,
@@ -43,7 +46,9 @@ import {
 } from '@/features/admin/api';
 import { summarizeCashBoxes, formatCurrencyFromCents } from '@/features/admin/utils';
 import type { AdminFilters, FixedExpenseRecord, VariableExpenseRecord } from '@/features/admin/types';
-import type { Store, AppUser } from '@/types/database';
+import type { Store, AppUser, Receivable, PaymentMethod } from '@/types/database';
+import { useAuth } from '@/hooks/useAuth';
+import { supabase } from '@/integrations/supabase/client';
 
 type TabValue = 'overview' | 'cash';
 
@@ -70,6 +75,25 @@ interface VariableExpenseDialogProps {
 }
 
 type ListMode = 'all' | 'top5' | 'top10' | 'highest' | 'lowest';
+
+interface ReceivableWithPayments extends Receivable {
+  receivable_payments: Array<{
+    id: string;
+    paid_on: string;
+    amount_cents: number;
+    method?: PaymentMethod;
+  }>;
+}
+
+function getTodayISO(): string {
+  return formatISO(new Date(), { representation: 'date' });
+}
+
+const RECEIVABLE_STATUS_STYLES: Record<Receivable['status'], { label: string; badgeClass: string }> = {
+  aberto: { label: 'Aberto', badgeClass: 'bg-amber-100 text-amber-800' },
+  pago_pendente_baixa: { label: 'Pago (pendente baixa)', badgeClass: 'bg-blue-100 text-blue-800' },
+  baixado: { label: 'Baixado', badgeClass: 'bg-emerald-100 text-emerald-800' },
+};
 
 function applyViewMode<T extends { amount_cents: number }>(items: T[], mode: ListMode): T[] {
   const sortedDesc = [...items].sort((a, b) => b.amount_cents - a.amount_cents);
@@ -98,7 +122,11 @@ function getDefaultDateRange(): { start: string; end: string } {
 
 export default function AdminDashboard() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const { start, end } = getDefaultDateRange();
+  const { user, signOut } = useAuth();
+  const userDisplayName = user?.name || user?.email || 'Usuário';
+  const canManageReceivables = user?.role === 'admin';
 
   const [filters, setFilters] = useState<AdminFilters>({
     storeId: null,
@@ -122,6 +150,14 @@ export default function AdminDashboard() {
   const [activeMonth, setActiveMonth] = useState<string | null>(null);
   const [fixedViewMode, setFixedViewMode] = useState<ListMode>('top5');
   const [variableViewMode, setVariableViewMode] = useState<ListMode>('top5');
+  const [receivablesSearch, setReceivablesSearch] = useState('');
+  const [receivablePaymentDialog, setReceivablePaymentDialog] = useState<{
+    receivable: ReceivableWithPayments;
+    amount_cents: number;
+    method: PaymentMethod;
+    paid_on: string;
+  } | null>(null);
+  const [receivableToConfirmBaixa, setReceivableToConfirmBaixa] = useState<ReceivableWithPayments | null>(null);
 
   const { data: stores = [], isLoading: isLoadingStores } = useQuery<Store[]>({
     queryKey: ['admin-stores'],
@@ -132,6 +168,14 @@ export default function AdminDashboard() {
     queryKey: ['admin-users', filters.storeId],
     queryFn: () => fetchUsers(filters.storeId ?? undefined),
   });
+
+  const receivablesQueryKey = [
+    'admin-receivables',
+    appliedFilters?.storeId,
+    appliedFilters?.vistoriadorId,
+    appliedFilters?.startDate,
+    appliedFilters?.endDate,
+  ] as const;
 
   const cashBoxesQuery = useQuery({
     queryKey: ['admin-cash-boxes', appliedFilters],
@@ -158,6 +202,49 @@ export default function AdminDashboard() {
         startDate: appliedFilters?.startDate ?? '',
         endDate: appliedFilters?.endDate ?? '',
       }),
+    enabled: Boolean(appliedFilters),
+  });
+
+  const {
+    data: receivables = [],
+    isLoading: isLoadingReceivables,
+    isError: isReceivablesError,
+  } = useQuery<ReceivableWithPayments[]>({
+    queryKey: receivablesQueryKey,
+    queryFn: async () => {
+      if (!appliedFilters) {
+        return [];
+      }
+
+      let query = supabase
+        .from('receivables')
+        .select('*, receivable_payments(*), service_types(*)')
+        .order('created_at', { ascending: false })
+        .limit(100);
+
+      if (appliedFilters.storeId) {
+        query = query.eq('store_id', appliedFilters.storeId);
+      }
+
+      if (appliedFilters.vistoriadorId) {
+        query = query.eq('created_by_user_id', appliedFilters.vistoriadorId);
+      }
+
+      if (appliedFilters.startDate) {
+        query = query.gte('created_at', `${appliedFilters.startDate}T00:00:00`);
+      }
+
+      if (appliedFilters.endDate) {
+        query = query.lte('created_at', `${appliedFilters.endDate}T23:59:59`);
+      }
+
+      const { data, error } = await query;
+      if (error) {
+        throw error;
+      }
+
+      return (data ?? []) as ReceivableWithPayments[];
+    },
     enabled: Boolean(appliedFilters),
   });
 
@@ -223,6 +310,63 @@ export default function AdminDashboard() {
     },
   });
 
+  const registerReceivablePaymentMutation = useMutation({
+    mutationFn: async ({
+      receivable,
+      amount_cents,
+      method,
+      paid_on,
+    }: {
+      receivable: ReceivableWithPayments;
+      amount_cents: number;
+      method: PaymentMethod;
+      paid_on: string;
+    }) => {
+      const { error: paymentError } = await supabase.from('receivable_payments').insert({
+        receivable_id: receivable.id,
+        amount_cents,
+        method,
+        paid_on,
+        recorded_by_user_id: user?.id ?? receivable.created_by_user_id,
+      });
+      if (paymentError) throw paymentError;
+
+      const { error: statusError } = await supabase
+        .from('receivables')
+        .update({ status: 'pago_pendente_baixa' })
+        .eq('id', receivable.id);
+      if (statusError) throw statusError;
+    },
+    onSuccess: () => {
+      toast.success('Pagamento registrado. Status atualizado para aguardando baixa.');
+      setReceivablePaymentDialog(null);
+      queryClient.invalidateQueries({ queryKey: receivablesQueryKey });
+    },
+    onError: (error: unknown) => {
+      console.error('Erro ao registrar pagamento:', error);
+      toast.error('Não foi possível registrar o pagamento.');
+    },
+  });
+
+  const baixaReceivableMutation = useMutation({
+    mutationFn: async (receivableId: string) => {
+      const { error } = await supabase.from('receivables').update({ status: 'baixado' }).eq('id', receivableId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success('Recebível baixado e removido da listagem.');
+      setReceivableToConfirmBaixa(null);
+      queryClient.invalidateQueries({ queryKey: receivablesQueryKey });
+    },
+    onError: (error: unknown) => {
+      console.error('Erro ao dar baixa no recebível:', error);
+      toast.error('Não foi possível concluir a baixa. Tente novamente.');
+    },
+  });
+
+  const isRegisteringPayment = registerReceivablePaymentMutation.isPending;
+  const isBaixandoRecebivel = baixaReceivableMutation.isPending;
+
   const deleteVariableExpenseMutation = useMutation({
     mutationFn: deleteVariableExpense,
     onSuccess: () => {
@@ -261,6 +405,41 @@ export default function AdminDashboard() {
     });
     return map;
   }, [stores]);
+
+  const filteredReceivables = useMemo(() => {
+    const term = receivablesSearch.trim().toLowerCase();
+    return receivables.filter((receivable) => {
+      if (receivable.status === 'baixado') {
+        return false;
+      }
+
+      if (!term) {
+        return true;
+      }
+
+      const storeName = storeMap.get(receivable.store_id) ?? '';
+      const plate = receivable.plate ?? '';
+
+      return (
+        receivable.customer_name.toLowerCase().includes(term) ||
+        plate.toLowerCase().includes(term) ||
+        storeName.toLowerCase().includes(term)
+      );
+    });
+  }, [receivables, receivablesSearch, storeMap]);
+
+  const receivablesTotalCents = useMemo(
+    () =>
+      filteredReceivables.reduce(
+        (total, receivable) => total + (receivable.original_amount_cents ?? 0),
+        0,
+      ),
+    [filteredReceivables],
+  );
+
+  useEffect(() => {
+    setReceivablesSearch('');
+  }, [appliedFilters]);
 
   const filteredFixedExpenses = useMemo(() => {
     const data = fixedExpensesQuery.data ?? [];
@@ -454,12 +633,39 @@ export default function AdminDashboard() {
   return (
     <div className="min-h-screen bg-background p-6">
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
-        <header className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+        <header className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <h1 className="text-3xl font-bold text-slate-900">Administração</h1>
             <p className="text-muted-foreground">
               Visão consolidada das lojas e fechamentos. Período: {periodLabel}
             </p>
+          </div>
+          <div className="flex w-full items-center justify-between gap-3 md:w-auto md:justify-end">
+            <Button
+              type="button"
+              onClick={() => navigate('/admin/fechamento')}
+              variant="default"
+              size="sm"
+              className="gap-2"
+            >
+              <Calendar className="h-4 w-4" />
+              Fechamento mensal
+            </Button>
+            <div className="flex flex-col items-end text-right">
+              <span className="text-xs text-muted-foreground">Usuário</span>
+              <span className="max-w-[200px] truncate text-sm font-semibold text-slate-900 md:max-w-[240px]">
+                {userDisplayName}
+              </span>
+            </div>
+            <Button
+              onClick={() => void signOut()}
+              variant="outline"
+              size="sm"
+              className="gap-2"
+            >
+              <LogOut className="h-4 w-4" />
+              Sair
+            </Button>
           </div>
         </header>
 
@@ -554,6 +760,335 @@ export default function AdminDashboard() {
             </div>
           </CardContent>
         </Card>
+
+        <Accordion
+          type="single"
+          collapsible
+          className="overflow-hidden rounded-lg border bg-card text-card-foreground shadow-sm"
+        >
+          <AccordionItem value="receivables">
+            <AccordionTrigger className="px-6">
+              <div className="flex w-full items-center justify-between gap-3">
+                <div className="text-left">
+                  <p className="text-base font-semibold text-slate-900">Lista de A Receber</p>
+                  <p className="text-sm text-muted-foreground">
+                    {appliedFilters
+                      ? 'Clique para visualizar e buscar recebíveis pendentes.'
+                      : 'Defina os filtros acima e clique em Buscar para habilitar a lista.'}
+                  </p>
+                </div>
+                <div className="flex flex-col items-end gap-1 text-right">
+                  <Badge variant="outline">
+                    {appliedFilters ? `${filteredReceivables.length} pendentes` : 'Aguardando filtros'}
+                  </Badge>
+                  {appliedFilters && (
+                    <span className="text-xs text-muted-foreground">
+                      Total {formatCurrency(receivablesTotalCents)}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </AccordionTrigger>
+            <AccordionContent className="px-6 pb-6">
+              {appliedFilters === null ? (
+                <div className="rounded-md border border-dashed bg-muted/40 px-6 py-8 text-center text-sm text-muted-foreground">
+                  Utilize os filtros acima e clique em{' '}
+                  <span className="font-medium text-slate-900">Buscar</span> para carregar os recebíveis.
+                </div>
+              ) : isReceivablesError ? (
+                <div className="rounded-md border border-destructive/20 bg-destructive/10 px-4 py-6 text-sm text-destructive">
+                  Não foi possível carregar a lista de recebíveis. Tente novamente em instantes.
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                    <div className="relative w-full md:w-80">
+                      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                      <Input
+                        value={receivablesSearch}
+                        onChange={(event) => setReceivablesSearch(event.target.value)}
+                        placeholder="Buscar por cliente, placa ou loja..."
+                        disabled={!appliedFilters || isLoadingReceivables}
+                        className="pl-9"
+                      />
+                    </div>
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <span>Somatório selecionado:</span>
+                      <span className="font-semibold text-slate-900">{formatCurrency(receivablesTotalCents)}</span>
+                    </div>
+                  </div>
+                  {isLoadingReceivables ? (
+                    <div className="flex items-center justify-center rounded-md border border-dashed py-10 text-sm text-muted-foreground">
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Carregando recebíveis...
+                    </div>
+                  ) : filteredReceivables.length === 0 ? (
+                    <div className="flex items-center justify-center rounded-md border border-dashed py-10 text-sm text-muted-foreground">
+                      Nenhum recebível encontrado para os filtros aplicados.
+                    </div>
+                  ) : (
+                    <div className="max-h-96 overflow-auto rounded-md border">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Loja</TableHead>
+                            <TableHead>Cliente</TableHead>
+                            <TableHead>Status</TableHead>
+                            <TableHead>Valor</TableHead>
+                            <TableHead>Vencimento</TableHead>
+                            <TableHead>Atualização</TableHead>
+                            {canManageReceivables && <TableHead className="text-right">Ações</TableHead>}
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {filteredReceivables.map((receivable) => {
+                            const storeName = storeMap.get(receivable.store_id) ?? 'Loja';
+                            const statusInfo =
+                              RECEIVABLE_STATUS_STYLES[receivable.status] ?? RECEIVABLE_STATUS_STYLES.aberto;
+                            const payments = receivable.receivable_payments ?? [];
+                            const latestPayment = payments.reduce<
+                              ReceivableWithPayments['receivable_payments'][number] | null
+                            >((latest, current) => {
+                              if (!latest) {
+                                return current;
+                              }
+                              return current.paid_on > latest.paid_on ? current : latest;
+                            }, null);
+
+                            return (
+                              <TableRow key={receivable.id}>
+                                <TableCell className="whitespace-nowrap text-sm font-medium text-slate-700">
+                                  {storeName}
+                                </TableCell>
+                                <TableCell>
+                                  <div className="text-sm font-semibold text-slate-900">
+                                    {receivable.customer_name}
+                                  </div>
+                                  <div className="mt-1 flex flex-wrap gap-x-3 text-xs text-muted-foreground">
+                                    {receivable.service_types?.name && (
+                                      <span>{receivable.service_types.name}</span>
+                                    )}
+                                    {receivable.plate && (
+                                      <span>Placa {receivable.plate.toUpperCase()}</span>
+                                    )}
+                                  </div>
+                                </TableCell>
+                                <TableCell>
+                                  <Badge variant="outline" className={statusInfo.badgeClass}>
+                                    {statusInfo.label}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell>{formatCurrency(receivable.original_amount_cents ?? 0)}</TableCell>
+                                <TableCell>
+                                  {receivable.due_date ? formatDate(receivable.due_date) : '-'}
+                                </TableCell>
+                                <TableCell className="text-sm text-muted-foreground">
+                                  {latestPayment ? (
+                                    <span>
+                                      Pago em{' '}
+                                      <span className="font-medium text-slate-900">
+                                        {formatDate(latestPayment.paid_on)}
+                                      </span>
+                                    </span>
+                                  ) : (
+                                    <span>
+                                      Criado em{' '}
+                                      <span className="font-medium text-slate-900">
+                                        {formatDate(receivable.created_at)}
+                                      </span>
+                                    </span>
+                                  )}
+                                </TableCell>
+                                {canManageReceivables && (
+                                  <TableCell className="text-right">
+                                    <div className="flex flex-wrap items-center justify-end gap-2">
+                                      {receivable.status === 'aberto' && (
+                                        <Button
+                                          size="sm"
+                                          variant="secondary"
+                                          onClick={() =>
+                                            setReceivablePaymentDialog({
+                                              receivable,
+                                              amount_cents: receivable.original_amount_cents ?? 0,
+                                              method: 'pix',
+                                              paid_on: getTodayISO(),
+                                            })
+                                          }
+                                        >
+                                          <CheckCircle className="mr-1 h-4 w-4" />
+                                          Registrar pagamento
+                                        </Button>
+                                      )}
+                                      {receivable.status === 'pago_pendente_baixa' && (
+                                        <Button
+                                          size="sm"
+                                          variant="default"
+                                          onClick={() => setReceivableToConfirmBaixa(receivable)}
+                                        >
+                                          <BadgeCheck className="mr-1 h-4 w-4" />
+                                          Dar baixa
+                                        </Button>
+                                      )}
+                                    </div>
+                                  </TableCell>
+                                )}
+                              </TableRow>
+                            );
+                          })}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  )}
+                </div>
+              )}
+            </AccordionContent>
+          </AccordionItem>
+        </Accordion>
+
+        {canManageReceivables && (
+          <>
+            <Dialog
+              open={receivablePaymentDialog !== null}
+              onOpenChange={(open) => {
+                if (!open && !isRegisteringPayment) {
+                  setReceivablePaymentDialog(null);
+                }
+              }}
+            >
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Registrar pagamento</DialogTitle>
+                  <DialogDescription>Informe os detalhes para marcar o recebível como pago.</DialogDescription>
+                </DialogHeader>
+                {receivablePaymentDialog && (
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <Label>Cliente</Label>
+                      <Input value={receivablePaymentDialog.receivable.customer_name} disabled />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Valor pago</Label>
+                      <MoneyInput
+                        value={receivablePaymentDialog.amount_cents}
+                        onChange={(value) =>
+                          setReceivablePaymentDialog((previous) =>
+                            previous ? { ...previous, amount_cents: value } : previous,
+                          )
+                        }
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Método</Label>
+                      <Select
+                        value={receivablePaymentDialog.method}
+                        onValueChange={(value: PaymentMethod) =>
+                          setReceivablePaymentDialog((previous) =>
+                            previous ? { ...previous, method: value } : previous,
+                          )
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Selecione o método" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="pix">PIX</SelectItem>
+                          <SelectItem value="cartao">Cartão</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Data do pagamento</Label>
+                      <Input
+                        type="date"
+                        value={receivablePaymentDialog.paid_on}
+                        onChange={(event) =>
+                          setReceivablePaymentDialog((previous) =>
+                            previous ? { ...previous, paid_on: event.target.value } : previous,
+                          )
+                        }
+                      />
+                    </div>
+                  </div>
+                )}
+                <DialogFooter>
+                  <Button
+                    variant="outline"
+                    onClick={() => setReceivablePaymentDialog(null)}
+                    disabled={isRegisteringPayment}
+                  >
+                    Cancelar
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      if (!receivablePaymentDialog) return;
+                      registerReceivablePaymentMutation.mutate({
+                        receivable: receivablePaymentDialog.receivable,
+                        amount_cents: receivablePaymentDialog.amount_cents,
+                        method: receivablePaymentDialog.method,
+                        paid_on: receivablePaymentDialog.paid_on,
+                      });
+                    }}
+                    disabled={
+                      isRegisteringPayment ||
+                      !receivablePaymentDialog ||
+                      receivablePaymentDialog.amount_cents <= 0 ||
+                      !receivablePaymentDialog.paid_on
+                    }
+                  >
+                    {isRegisteringPayment ? 'Registrando...' : 'Confirmar pagamento'}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
+            <Dialog
+              open={receivableToConfirmBaixa !== null}
+              onOpenChange={(open) => {
+                if (!open && !isBaixandoRecebivel) {
+                  setReceivableToConfirmBaixa(null);
+                }
+              }}
+            >
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Confirmar baixa</DialogTitle>
+                  <DialogDescription>Dar baixa remove o recebível das listas ativas imediatamente.</DialogDescription>
+                </DialogHeader>
+                {receivableToConfirmBaixa && (
+                  <div className="space-y-2 text-sm">
+                    <p>
+                      Cliente:{' '}
+                      <span className="font-semibold text-slate-900">
+                        {receivableToConfirmBaixa.customer_name}
+                      </span>
+                    </p>
+                    <p>Valor: {formatCurrency(receivableToConfirmBaixa.original_amount_cents ?? 0)}</p>
+                    {receivableToConfirmBaixa.plate && <p>Placa: {receivableToConfirmBaixa.plate.toUpperCase()}</p>}
+                  </div>
+                )}
+                <DialogFooter>
+                  <Button
+                    variant="outline"
+                    onClick={() => setReceivableToConfirmBaixa(null)}
+                    disabled={isBaixandoRecebivel}
+                  >
+                    Cancelar
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    onClick={() => {
+                      if (!receivableToConfirmBaixa) return;
+                      baixaReceivableMutation.mutate(receivableToConfirmBaixa.id);
+                    }}
+                    disabled={isBaixandoRecebivel || !receivableToConfirmBaixa}
+                  >
+                    {isBaixandoRecebivel ? 'Processando...' : 'Confirmar baixa'}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          </>
+        )}
 
         {!appliedFilters ? (
           <Card className="border-dashed">
