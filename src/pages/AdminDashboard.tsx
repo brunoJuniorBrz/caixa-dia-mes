@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+﻿import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { addDays, formatISO, subDays } from 'date-fns';
@@ -29,7 +29,7 @@ import { formatCurrency } from '@/lib/money';
 import { formatDate } from '@/lib/date';
 import { useForm, Controller } from 'react-hook-form';
 import type { SubmitHandler } from 'react-hook-form';
-import { Loader2, Edit, Plus, Trash2, LogOut, Search, CheckCircle, BadgeCheck, Calendar } from 'lucide-react';
+import { Loader2, Edit, Plus, Trash2, LogOut, Search, CheckCircle, BadgeCheck, Calendar, BarChart3 } from 'lucide-react';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
@@ -626,7 +626,7 @@ export default function AdminDashboard() {
       .filter((box) => !activeMonth || box.date.startsWith(activeMonth ?? ''))
       .map((box) => ({
         id: box.id,
-        label: `${formatDate(box.date)} • ${box.note ?? 'Sem descrição'}`,
+        label: `${formatDate(box.date)} â€¢ ${box.note ?? 'Sem descrição'}`,
       }));
   }, [cashBoxesQuery.data, activeMonth]);
 
@@ -650,6 +650,16 @@ export default function AdminDashboard() {
             >
               <Calendar className="h-4 w-4" />
               Fechamento mensal
+            </Button>
+            <Button
+              type="button"
+              onClick={() => navigate('/admin/metricas')}
+              variant="secondary"
+              size="sm"
+              className="gap-2"
+            >
+              <BarChart3 className="h-4 w-4" />
+              Métricas
             </Button>
             <div className="flex flex-col items-end text-right">
               <span className="text-xs text-muted-foreground">Usuário</span>
@@ -1353,7 +1363,7 @@ export default function AdminDashboard() {
                               <div className="space-y-1">
                                 <p className="text-xs uppercase text-muted-foreground">{storeName}</p>
                                 <p className="text-sm font-semibold text-slate-900">
-                                  {formatDate(expense.cash_box.date)} • {expense.cash_box.note ?? 'Sem descrição'}
+                                  {formatDate(expense.cash_box.date)} â€¢ {expense.cash_box.note ?? 'Sem descrição'}
                                 </p>
                                 {vistoriadorName && (
                                   <p className="text-xs text-muted-foreground">Vistoriador: {vistoriadorName}</p>
@@ -1451,7 +1461,7 @@ export default function AdminDashboard() {
                             <div>
                               <p className="text-sm uppercase text-muted-foreground">{storeName}</p>
                               <p className="text-lg font-semibold text-slate-900">
-                                {formatDate(box.date)} • {box.note ?? 'Sem descrição'}
+                                {formatDate(box.date)} â€¢ {box.note ?? 'Sem descrição'}
                               </p>
                             </div>
                             <div className="flex flex-wrap gap-3 text-sm">
@@ -1826,3 +1836,8 @@ function defaultMonth(): string {
   const iso = formatISO(now, { representation: 'date' });
   return iso.slice(0, 7);
 }
+
+
+
+
+

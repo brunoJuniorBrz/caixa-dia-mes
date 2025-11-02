@@ -1,4 +1,4 @@
-import { supabase } from '@/integrations/supabase/client';
+﻿import { supabase } from '@/integrations/supabase/client';
 import type { CashBoxFormData } from '@/schemas/cash-box';
 import { getTodayISO } from '@/lib/date';
 import type { CashBoxWithRelations } from './types';
@@ -196,3 +196,4 @@ export async function fetchServiceTypes(): Promise<ServiceType[]> {
   }
   return (data ?? []) as ServiceType[];
 }
+

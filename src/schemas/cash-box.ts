@@ -2,28 +2,28 @@ import { z } from 'zod';
 import { getTodayISO } from '@/lib/date';
 
 export const cashBoxServiceSchema = z.object({
-  service_type_id: z.string().min(1, 'Selecione um servico'),
-  quantity: z.number().int().min(0, 'Quantidade invalida'),
-  unit_price_cents: z.number().int().min(0, 'Valor invalido'),
+  service_type_id: z.string().min(1, 'Selecione um serviço'),
+  quantity: z.number().int().min(0, 'Quantidade inválida'),
+  unit_price_cents: z.number().int().min(0, 'Valor inválido'),
 });
 
 export const cashBoxElectronicEntrySchema = z.object({
   method: z.enum(['pix', 'cartao'], {
-    errorMap: () => ({ message: 'Selecione o metodo' }),
+    errorMap: () => ({ message: 'Selecione o método' }),
   }),
-  amount_cents: z.number().int().min(0, 'Valor invalido'),
+  amount_cents: z.number().int().min(0, 'Valor inválido'),
 });
 
 export const cashBoxExpenseSchema = z.object({
-  title: z.string().min(1, 'Informe a descricao'),
-  amount_cents: z.number().int().min(0, 'Valor invalido'),
+  title: z.string().min(1, 'Informe a descrição'),
+  amount_cents: z.number().int().min(0, 'Valor inválido'),
 });
 
 export const cashBoxReceivableSchema = z.object({
   customer_name: z.string().min(1, 'Informe o cliente'),
   plate: z.string().optional(),
   service_type_id: z.string().optional(),
-  original_amount_cents: z.number().int().min(0, 'Valor invalido'),
+  original_amount_cents: z.number().int().min(0, 'Valor inválido'),
   due_date: z.string().optional(),
 });
 

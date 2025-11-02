@@ -1,12 +1,13 @@
-import { supabase } from '@/integrations/supabase/client';
+﻿import { supabase } from '@/integrations/supabase/client';
 import type { AppUser, ServiceType, Store } from '@/types/database';
-import { endOfMonth, format } from 'date-fns';
+import { endOfMonth, format, parse } from 'date-fns';
 import type {
   AdminFilters,
   CashBoxWithRelations,
   FixedExpenseRecord,
   MonthlyClosureData,
   MonthlyClosurePayload,
+  MonthlyClosureExpenseEntry,
   MonthlyClosureServiceEntry,
   VariableExpenseRecord,
 } from './types';
@@ -38,6 +39,15 @@ export async function fetchUsers(storeId?: string): Promise<AppUser[]> {
   return (data ?? []) as AppUser[];
 }
 
+const MANUAL_CLOSURE_NOTE_PREFIX = 'Fechamento manual';
+
+const CASH_BOX_WITH_RELATIONS_SELECT = `
+    *,
+    cash_box_services(*, service_types(*)),
+    cash_box_electronic_entries(*),
+    cash_box_expenses(*)
+  `.trim();
+
 export async function fetchCashBoxesByRange({
   startDate,
   endDate,
@@ -46,14 +56,7 @@ export async function fetchCashBoxesByRange({
 }: AdminFilters): Promise<CashBoxWithRelations[]> {
   let query = supabase
     .from('cash_boxes')
-    .select(
-      `
-        *,
-        cash_box_services(*, service_types(*)),
-        cash_box_electronic_entries(*),
-        cash_box_expenses(*)
-      `,
-    )
+    .select(CASH_BOX_WITH_RELATIONS_SELECT)
     .gte('date', startDate)
     .lte('date', endDate)
     .order('date', { ascending: false })
@@ -71,7 +74,50 @@ export async function fetchCashBoxesByRange({
   if (error) {
     throw error;
   }
-  return (data ?? []) as CashBoxWithRelations[];
+
+  let results = (data ?? []) as CashBoxWithRelations[];
+
+  let manualQuery = supabase
+    .from('cash_boxes')
+    .select(CASH_BOX_WITH_RELATIONS_SELECT)
+    .gte('date', startDate)
+    .lte('date', endDate)
+    .order('date', { ascending: false })
+    .limit(500)
+    .ilike('note', `${MANUAL_CLOSURE_NOTE_PREFIX}%`);
+
+  if (storeId) {
+    manualQuery = manualQuery.eq('store_id', storeId);
+  }
+
+  if (vistoriadorId) {
+    manualQuery = manualQuery.eq('vistoriador_id', vistoriadorId);
+  }
+
+  const { data: manualData, error: manualError } = await manualQuery;
+  if (manualError) {
+    throw manualError;
+  }
+
+  if (manualData && manualData.length > 0) {
+    const existingIds = new Set(results.map((box) => box.id));
+    const merged = [...results];
+
+    for (const manualBox of manualData as CashBoxWithRelations[]) {
+      if (!existingIds.has(manualBox.id)) {
+        merged.push(manualBox);
+      }
+    }
+
+    merged.sort((a, b) => {
+      if (a.date === b.date) return 0;
+      return a.date > b.date ? -1 : 1;
+    });
+
+    results = merged;
+  }
+
+  return results;
 }
 
 export async function fetchFixedExpenses({
@@ -211,7 +257,7 @@ export async function createVariableExpense(payload: {
 }
 
 function buildMonthlyClosureNote(month: string): string {
-  return `Fechamento manual ${month}`;
+  return `${MANUAL_CLOSURE_NOTE_PREFIX} ${month}`;
 }
 
 function getMonthRange(month: string): { startDate: string; endDate: string } {
@@ -220,7 +266,7 @@ function getMonthRange(month: string): { startDate: string; endDate: string } {
     throw new Error('Mês inválido para fechamento mensal.');
   }
 
-  const baseDate = new Date(`${month}-01T00:00:00Z`);
+  const baseDate = parse(`${month}-01`, 'yyyy-MM-dd', new Date());
   if (Number.isNaN(baseDate.getTime())) {
     throw new Error('Mês inválido para fechamento mensal.');
   }
@@ -291,7 +337,7 @@ export async function fetchMonthlyClosure({
   }
 
   const services = (data.cash_box_services ?? []) as MonthlyClosureServiceEntry[];
-  const expenses = (data.cash_box_expenses ?? []) ?? [];
+  const expenses = (data.cash_box_expenses ?? []) as MonthlyClosureExpenseEntry[];
 
   return {
     cashBoxId: data.id,
@@ -430,3 +476,4 @@ export async function upsertMonthlyClosure({
     throw error;
   }
 }
+

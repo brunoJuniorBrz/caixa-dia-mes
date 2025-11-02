@@ -12,6 +12,7 @@ import CashBoxNew from "./pages/CashBoxNew";
 import CashBoxEdit from "./pages/CashBoxEdit";
 import AdminDashboard from "./pages/AdminDashboard";
 import AdminMonthlyClosure from "./pages/AdminMonthlyClosure";
+import AdminMetrics from "./pages/AdminMetrics";
 
 const queryClient = new QueryClient();
 
@@ -62,6 +63,14 @@ const App = () => (
               element={
                 <ProtectedRoute requireRole="admin">
                   <AdminMonthlyClosure />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/metricas"
+              element={
+                <ProtectedRoute requireRole="admin">
+                  <AdminMetrics />
                 </ProtectedRoute>
               }
             />

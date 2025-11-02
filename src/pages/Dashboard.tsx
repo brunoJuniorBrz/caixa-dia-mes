@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useMemo, useState } from 'react';
+﻿import { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/useAuth';
@@ -412,7 +412,7 @@ export default function Dashboard() {
       invalidateReceivables();
     } catch (error) {
       console.error(error);
-      toast.error('Nao foi possivel atualizar o recebivel.');
+      toast.error('Não foi possível atualizar o recebível.');
     } finally {
       setIsSavingEdit(false);
     }
@@ -443,7 +443,7 @@ export default function Dashboard() {
       invalidateReceivables();
     } catch (error) {
       console.error(error);
-      toast.error('Nao foi possivel registrar o pagamento.');
+      toast.error('Não foi possível registrar o pagamento.');
     } finally {
       setIsSavingPayment(false);
     }
@@ -464,7 +464,7 @@ export default function Dashboard() {
       invalidateReceivables();
     } catch (error) {
       console.error(error);
-      toast.error('Nao foi possivel concluir a baixa.');
+      toast.error('Não foi possível concluir a baixa.');
     } finally {
       setIsSavingBaixa(false);
     }
@@ -807,19 +807,19 @@ export default function Dashboard() {
                       return (
                         <TableRow key={receivable.id}>
                           <TableCell className="font-medium">{receivable.customer_name}</TableCell>
-                          <TableCell>{receivable.plate || '—'}</TableCell>
+                          <TableCell>{receivable.plate || 'â€”'}</TableCell>
                           <TableCell>{serviceName}</TableCell>
                           <TableCell>
                             <Badge className={statusInfo.badgeClass}>{statusInfo.label}</Badge>
                           </TableCell>
                           <TableCell>{formatCurrency(receivable.original_amount_cents ?? 0)}</TableCell>
                           <TableCell>
-                            {receivable.due_date ? formatDate(receivable.due_date) : '—'}
+                            {receivable.due_date ? formatDate(receivable.due_date) : 'â€”'}
                           </TableCell>
                           <TableCell>
                             {latestPayment
                               ? `${formatCurrency(latestPayment.amount_cents)} em ${formatDate(latestPayment.paid_on)}`
-                              : '—'}
+                              : 'â€”'}
                           </TableCell>
                           <TableCell className="space-x-1 text-right">
                             <Button
@@ -872,7 +872,7 @@ export default function Dashboard() {
       <Dialog open={editingReceivable !== null} onOpenChange={(open) => !open && setEditingReceivable(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Editar recebivel</DialogTitle>
+            <DialogTitle>Editar recebível</DialogTitle>
             <DialogDescription>Atualize as informacoes deste cliente.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
@@ -996,7 +996,7 @@ export default function Dashboard() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Dar baixa</DialogTitle>
-            <DialogDescription>Confirme para concluir a baixa deste recebivel.</DialogDescription>
+            <DialogDescription>Confirme para concluir a baixa deste recebível.</DialogDescription>
           </DialogHeader>
           {confirmReceivable && (
             <div className="space-y-2 text-sm">
@@ -1055,3 +1055,5 @@ export default function Dashboard() {
   );
 
 }
+
+

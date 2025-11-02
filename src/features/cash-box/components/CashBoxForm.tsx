@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+﻿import { useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Controller, FormProvider, useFieldArray, useForm, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -560,7 +560,7 @@ export function CashBoxForm({ mode, cashBoxId }: CashBoxFormProps) {
           <CardContent className="space-y-4">
             {expensesFieldArray.fields.length === 0 && (
               <p className="rounded-lg border border-dashed border-slate-200 px-4 py-6 text-center text-sm text-slate-500">
-                Nenhuma despesa registrada. Clique em “Adicionar despesa” para incluir.
+                Nenhuma despesa registrada. Clique em â€œAdicionar despesaâ€ para incluir.
               </p>
             )}
 
@@ -628,7 +628,7 @@ export function CashBoxForm({ mode, cashBoxId }: CashBoxFormProps) {
             <div className="space-y-1">
               <CardTitle className="text-lg">A Receber</CardTitle>
               <CardDescription>
-                Novos registros são adicionados ao painel “A Receber”. Itens existentes devem ser ajustados no dashboard.
+                Novos registros são adicionados ao painel â€œA Receberâ€. Itens existentes devem ser ajustados no dashboard.
               </CardDescription>
             </div>
             <Button type="button" variant="outline" onClick={handleAddReceivable}>
@@ -638,7 +638,7 @@ export function CashBoxForm({ mode, cashBoxId }: CashBoxFormProps) {
           <CardContent className="space-y-4">
             {receivablesFieldArray.fields.length === 0 && (
               <p className="rounded-lg border border-dashed border-slate-200 px-4 py-6 text-center text-sm text-slate-500">
-                Nenhum item cadastrado. Clique em “Adicionar a receber” para incluir.
+                Nenhum item cadastrado. Clique em â€œAdicionar a receberâ€ para incluir.
               </p>
             )}
 
@@ -820,3 +820,4 @@ function LoadingState() {
     </div>
   );
 }
+

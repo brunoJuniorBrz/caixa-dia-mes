@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+﻿import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQueryClient, useQuery, useMutation } from '@tanstack/react-query';
-import { format } from 'date-fns';
+import { format, parse } from 'date-fns';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -26,6 +26,10 @@ interface VariableExpenseDraft {
   amount_cents: number;
 }
 
+function parseMonth(month: string): Date {
+  return parse(`${month}-01`, 'yyyy-MM-dd', new Date());
+}
+
 export default function AdminMonthlyClosure() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -40,7 +44,8 @@ export default function AdminMonthlyClosure() {
 
   const monthLabel = useMemo(() => {
     if (!selectedMonth) return MONTH_PLACEHOLDER;
-    const date = new Date(`${selectedMonth}-01T00:00:00Z`);
+    const date = parseMonth(selectedMonth);
+    if (Number.isNaN(date.getTime())) return MONTH_PLACEHOLDER;
     return format(date, "MMMM 'de' yyyy");
   }, [selectedMonth]);
 
@@ -399,3 +404,4 @@ export default function AdminMonthlyClosure() {
     </div>
   );
 }
+

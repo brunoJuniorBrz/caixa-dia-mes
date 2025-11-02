@@ -47,34 +47,35 @@ export function summarizeCashBoxes(
     const electronicEntries = box.cash_box_electronic_entries ?? [];
     const expenses = box.cash_box_expenses ?? [];
 
-    let gross = current.gross;
-    let returns = 0;
+    let boxGross = 0;
 
     for (const service of services) {
       const countsInGross = service.service_types?.counts_in_gross ?? true;
-      const total = service.total_cents ?? service.unit_price_cents * service.quantity;
+      const total =
+        service.total_cents ?? (service.unit_price_cents ?? 0) * service.quantity;
       if (countsInGross) {
-        gross += total;
-      } else {
-        returns += service.quantity;
+        boxGross += total;
       }
     }
 
-    const pix = current.pix +
-      electronicEntries
-        .filter((entry) => entry.method === 'pix')
-        .reduce((acc, entry) => acc + entry.amount_cents, 0);
+    const boxPix = electronicEntries
+      .filter((entry) => entry.method === 'pix')
+      .reduce((acc, entry) => acc + entry.amount_cents, 0);
 
-    const cartao = current.cartao +
-      electronicEntries
-        .filter((entry) => entry.method === 'cartao')
-        .reduce((acc, entry) => acc + entry.amount_cents, 0);
+    const boxCartao = electronicEntries
+      .filter((entry) => entry.method === 'cartao')
+      .reduce((acc, entry) => acc + entry.amount_cents, 0);
 
-    const expensesVariable =
-      current.expensesVariable +
-      expenses.reduce((acc, expense) => acc + (expense.amount_cents ?? 0), 0);
+    const boxExpensesVariable = expenses.reduce(
+      (acc, expense) => acc + (expense.amount_cents ?? 0),
+      0,
+    );
 
-    const net = current.net + (gross - expensesVariable);
+    const gross = current.gross + boxGross;
+    const pix = current.pix + boxPix;
+    const cartao = current.cartao + boxCartao;
+    const expensesVariable = current.expensesVariable + boxExpensesVariable;
+    const net = current.net + (boxGross - boxExpensesVariable);
 
     summaryMap.set(key, {
       label,

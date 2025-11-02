@@ -1,4 +1,4 @@
-import { z } from 'zod';
+﻿import { z } from 'zod';
 
 export const loginSchema = z.object({
   email: z.string().email('E-mail inválido'),
@@ -55,3 +55,4 @@ export type ReceivableInput = z.infer<typeof receivableSchema>;
 export type ReceivablePaymentInput = z.infer<typeof receivablePaymentSchema>;
 export type FixedExpenseTemplateInput = z.infer<typeof fixedExpenseTemplateSchema>;
 export type MonthlyExpenseInput = z.infer<typeof monthlyExpenseSchema>;
+

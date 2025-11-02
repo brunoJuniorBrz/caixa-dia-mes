@@ -1,4 +1,4 @@
-export function formatCurrency(amountInCents: number): string {
+﻿export function formatCurrency(amountInCents: number): string {
   const amountInReais = amountInCents / 100;
   return new Intl.NumberFormat('pt-BR', {
     style: 'currency',
@@ -24,3 +24,4 @@ export function centsToReais(cents: number): number {
 export function reaisToCents(reais: number): number {
   return Math.round(reais * 100);
 }
+

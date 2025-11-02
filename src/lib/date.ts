@@ -1,4 +1,4 @@
-import { format, parse, startOfMonth, endOfMonth, eachDayOfInterval, parseISO } from 'date-fns';
+﻿import { format, parse, startOfMonth, endOfMonth, eachDayOfInterval, parseISO } from 'date-fns';
 import { toZonedTime, fromZonedTime } from 'date-fns-tz';
 import { ptBR } from 'date-fns/locale';
 
@@ -60,3 +60,4 @@ export function formatMonthYear(date: Date | string): string {
   const d = typeof date === 'string' ? parseISO(date) : date;
   return format(toZonedTime(d, TIMEZONE), 'MMMM/yyyy', { locale: ptBR });
 }
+
