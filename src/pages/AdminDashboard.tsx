@@ -45,9 +45,11 @@ import { useAuth } from '@/hooks/useAuth';
 import { KpiCard } from '@/components/KpiCard';
 import { InsightsIA } from '@/components/InsightsIA';
 import { AlertsList, type AlertItem } from '@/components/AlertsList';
-import { ChartPareto } from '@/components/charts/ChartPareto';
 import { ChartWaterfall } from '@/components/charts/ChartWaterfall';
 import { ChartHeatmap } from '@/components/charts/ChartHeatmap';
+import { MarginBarChart } from '@/components/charts/MarginBarChart';
+import { MarginPercentageChart } from '@/components/charts/MarginPercentageChart';
+import { DREVisual } from '@/components/DREVisual';
 import { DetailModal } from '@/components/DetailModal';
 import { formatCurrency, formatPercent } from '@/utils/format';
 
@@ -717,27 +719,49 @@ const AdminDashboard = () => {
     };
   }, [cashBoxesQuery.data]);
 
-  const paretoData = useMemo(() => {
-    return metrics.services
-      .slice(0, 10)
-      .map((service) => {
-        const margem = service.valueCents;
-        return {
-          servico: service.code ?? service.name,
-          receita: service.valueCents,
-          margem,
-          acumulada_pct: 0,
-        };
-      })
-      .map((item, idx, arr) => {
-        const total = arr.reduce((sum, i) => sum + i.receita, 0);
-        const acumulada = arr.slice(0, idx + 1).reduce((sum, i) => sum + i.receita, 0);
-        return {
-          ...item,
-          acumulada_pct: total > 0 ? (acumulada / total) * 100 : 0,
-        };
+  const marginChartData = useMemo(() => {
+    const boxes = cashBoxesQuery.data ?? [];
+    if (!appliedFilters.startDate || !appliedFilters.endDate || boxes.length === 0) {
+      return [];
+    }
+
+    const endDate = parseISO(appliedFilters.endDate);
+    const startDate = parseISO(appliedFilters.startDate);
+    const dayData: Array<{ date: string; marginCents: number; label: string; revenueCents: number }> = [];
+
+    let currentDate = startDate;
+    while (currentDate <= endDate) {
+      const dateStr = formatISO(currentDate, { representation: 'date' });
+      const dayBoxes = boxes.filter(box => box.date === dateStr);
+      
+      const dayRevenueCents = dayBoxes.reduce((sum, box) => {
+        const services = box.cash_box_services ?? [];
+        return sum + services.reduce((s, svc) => s + (svc.total_cents ?? 0), 0);
+      }, 0);
+
+      const dayVariableCents = dayBoxes.reduce((sum, box) => {
+        const expenses = box.cash_box_expenses ?? [];
+        return sum + expenses.reduce((s, exp) => s + (exp.amount_cents ?? 0), 0);
+      }, 0);
+
+      const dayMarginCents = dayRevenueCents - dayVariableCents;
+
+      dayData.push({
+        date: dateStr,
+        marginCents: dayMarginCents,
+        label: format(currentDate, 'dd/MM'),
+        revenueCents: dayRevenueCents,
       });
-  }, [metrics.services]);
+
+      currentDate = new Date(currentDate.getTime() + 86400000);
+    }
+
+    return dayData.map(item => ({
+      ...item,
+      marginPercentage: item.revenueCents > 0 ? 
+        ((item.marginCents / item.revenueCents) * 100) : 0,
+    }));
+  }, [cashBoxesQuery.data, appliedFilters]);
 
   const waterfallData = useMemo(() => {
     if (metrics.storeRanking.length === 0 && metrics.totalValueCents === 0) return null;
@@ -1281,12 +1305,40 @@ const AdminDashboard = () => {
                 <AlertsList alerts={alerts} isLoading={isLoading} onClick={(alert) => console.log('Alert clicked:', alert)} />
               </div>
 
-              <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
-                <ChartPareto data={paretoData} title="Análise de Pareto - Margem" />
+              <div className="grid gap-4 lg:grid-cols-2">
+                <DREVisual 
+                  data={{
+                    totalRevenueCents: metrics.totalValueCents,
+                    variableExpensesCents: metrics.variableExpensesTotalCents,
+                    fixedExpensesCents: metrics.fixedExpensesTotalCents,
+                    netResultCents: metrics.netResultCents,
+                  }}
+                  title="DRE Visual - Fluxo Financeiro"
+                />
                 {waterfallData && (
-                  <ChartWaterfall loja={waterfallData.loja} etapas={waterfallData.etapas} />
+                  <ChartWaterfall 
+                    loja={waterfallData.loja} 
+                    etapas={waterfallData.etapas}
+                    title="Cascata de Receitas e Custos" 
+                  />
                 )}
-                <ChartHeatmap data={heatmapData} title="Heatmap de Vistorias" />
+              </div>
+
+              {marginChartData.length > 0 && (
+                <div className="grid gap-4 lg:grid-cols-2">
+                  <MarginBarChart 
+                    data={marginChartData}
+                    title="Margem em Reais por Dia"
+                  />
+                  <MarginPercentageChart 
+                    data={marginChartData}
+                    title="Margem Percentual sobre Faturamento"
+                  />
+                </div>
+              )}
+
+              <div className="grid gap-4 lg:grid-cols-1">
+                <ChartHeatmap data={heatmapData} title="Mapa de Calor: Volume de Vendas por Horário" />
               </div>
 
               <div className="grid gap-4 lg:grid-cols-2">

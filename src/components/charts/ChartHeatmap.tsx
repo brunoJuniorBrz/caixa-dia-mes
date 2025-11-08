@@ -15,13 +15,14 @@ const DAYS_OF_WEEK = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 const HOURS = Array.from({ length: 13 }, (_, i) => i + 8);
 
 function getColorIntensity(value: number, max: number): string {
-  if (max === 0) return '#e2e8f0';
+  if (max === 0) return '#f0f9ff';
   const ratio = value / max;
-  if (ratio === 0) return '#f1f5f9';
-  if (ratio < 0.25) return '#dbeafe';
-  if (ratio < 0.5) return '#93c5fd';
-  if (ratio < 0.75) return '#3b82f6';
-  return '#1e40af';
+  if (ratio === 0) return '#f0f9ff';
+  if (ratio < 0.2) return '#e0f2fe';
+  if (ratio < 0.4) return '#bae6fd';
+  if (ratio < 0.6) return '#7dd3fc';
+  if (ratio < 0.8) return '#38bdf8';
+  return '#0284c7';
 }
 
 export function ChartHeatmap({ data, title = 'Heatmap de Vistorias' }: ChartHeatmapProps) {
@@ -65,10 +66,16 @@ export function ChartHeatmap({ data, title = 'Heatmap de Vistorias' }: ChartHeat
     return { day, data: dayData };
   });
 
+  const topHours = [...data]
+    .sort((a, b) => b.vistorias - a.vistorias)
+    .slice(0, 3)
+    .map(d => `${DAYS_OF_WEEK[d.dow]} ${d.hora}h`);
+
   return (
-    <Card className="bg-white border border-slate-200 rounded-2xl shadow-sm">
+    <Card className="bg-white border border-slate-200 rounded-md shadow-sm">
       <CardHeader>
         <CardTitle className="text-base font-semibold text-slate-900">{title}</CardTitle>
+        <p className="text-sm text-slate-500">Quantidade de serviços realizados por horário</p>
       </CardHeader>
       <CardContent>
         <div className="overflow-x-auto">
@@ -88,42 +95,45 @@ export function ChartHeatmap({ data, title = 'Heatmap de Vistorias' }: ChartHeat
                 {heatmapGrid.map((row, rowIdx) => (
                   <tr key={rowIdx}>
                     <td className="text-xs text-slate-700 font-medium p-1">{row.day}</td>
-                    {row.data.map((cell, cellIdx) => (
-                      <td
-                        key={cellIdx}
-                        className="h-8 w-8 rounded border border-slate-200 text-center text-xs font-semibold p-1"
-                        style={{
-                          backgroundColor: getColorIntensity(cell.vistorias, maxValue),
-                          color: cell.vistorias > maxValue * 0.5 ? 'white' : '#334155',
-                        }}
-                        title={`${DAYS_OF_WEEK[rowIdx]} ${cell.hora}h — ${cell.vistorias} ${cell.vistorias === 1 ? 'vistoria' : 'vistorias'}`}
-                      >
-                        {cell.vistorias > 0 ? cell.vistorias : ''}
-                      </td>
-                    ))}
+                    {row.data.map((cell, cellIdx) => {
+                      const isTopHour = topHours.includes(`${DAYS_OF_WEEK[rowIdx]} ${cell.hora}h`);
+                      return (
+                        <td
+                          key={cellIdx}
+                          className="h-8 w-8 rounded border border-slate-200 text-center text-xs font-semibold p-1 relative"
+                          style={{
+                            backgroundColor: getColorIntensity(cell.vistorias, maxValue),
+                            color: cell.vistorias > maxValue * 0.6 ? 'white' : '#334155',
+                          }}
+                          title={`${DAYS_OF_WEEK[rowIdx]} ${cell.hora}h — ${cell.vistorias} ${cell.vistorias === 1 ? 'serviço' : 'serviços'}`}
+                        >
+                          {cell.vistorias > 0 ? cell.vistorias : ''}
+                          {isTopHour && cell.vistorias > 0 && (
+                            <span className="absolute top-0 right-0 text-yellow-400" style={{ fontSize: '8px' }}>★</span>
+                          )}
+                        </td>
+                      );
+                    })}
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         </div>
-        <div className="mt-4 flex items-center justify-center gap-2 text-xs text-slate-600">
-          <span>Intensidade:</span>
-          <div className="flex items-center gap-1">
-            <div className="h-3 w-3 rounded bg-slate-200 border border-slate-300" />
-            <span>0</span>
+        <div className="mt-4 space-y-2">
+          <div className="flex items-center justify-center gap-3 text-xs text-slate-600">
+            <span className="font-medium">Legenda:</span>
+            <div className="flex items-center gap-1">
+              <div className="h-3 w-8 rounded bg-gradient-to-r from-sky-100 via-sky-300 to-sky-600 border border-slate-300" />
+              <span>Baixo → Alto</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="text-yellow-400 text-sm">★</span>
+              <span>Top 3 horários</span>
+            </div>
           </div>
-          <div className="flex items-center gap-1">
-            <div className="h-3 w-3 rounded bg-blue-200 border border-blue-300" />
-            <span>Baixa</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <div className="h-3 w-3 rounded bg-blue-400 border border-blue-500" />
-            <span>Média</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <div className="h-3 w-3 rounded bg-blue-600 border border-blue-700" />
-            <span>Alta</span>
+          <div className="text-center text-xs text-slate-500">
+            Máximo: {maxValue} serviços
           </div>
         </div>
       </CardContent>
