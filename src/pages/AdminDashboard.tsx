@@ -358,6 +358,30 @@ const AdminDashboard = () => {
       return emptyMetrics;
     }
 
+    // Separa fechamentos mensais dos caixas diários
+    const monthlyClosures = boxes.filter(
+      (box) => box.note && box.note.startsWith('Fechamento manual'),
+    );
+    const dailyBoxes = boxes.filter(
+      (box) => !box.note || !box.note.startsWith('Fechamento manual'),
+    );
+
+    // Mapa de meses que têm fechamento mensal (para ignorar caixas diários desses meses)
+    const monthsWithClosure = new Set<string>();
+    monthlyClosures.forEach((closure) => {
+      const monthKey = monthKeyFrom(closure.date);
+      monthsWithClosure.add(monthKey);
+    });
+
+    // Filtra caixas diários: remove os que são de meses que têm fechamento
+    const boxesToProcess = dailyBoxes.filter((box) => {
+      const monthKey = monthKeyFrom(box.date);
+      return !monthsWithClosure.has(monthKey);
+    });
+
+    // Combina fechamentos mensais com caixas diários (apenas dos meses sem fechamento)
+    const allBoxes = [...monthlyClosures, ...boxesToProcess];
+
     const serviceAggregates = new Map<string, ServiceAggregate>();
     const storeAggregates = new Map<string, StoreAggregate>();
     const monthlyAggregates = new Map<string, PeriodPerformance>();
@@ -383,7 +407,7 @@ const AdminDashboard = () => {
       return current;
     };
 
-    boxes.forEach((box) => {
+    allBoxes.forEach((box) => {
       const services = box.cash_box_services ?? [];
       const monthKey = monthKeyFrom(box.date);
       const monthLabel = monthLabelFrom(box.date);
@@ -414,7 +438,13 @@ const AdminDashboard = () => {
           0;
         const totalCents = service.total_cents ?? unitPrice * quantity;
 
-        boxServiceTotalCents += totalCents;
+        // Verifica se o serviço conta no faturamento (counts_in_gross)
+        const countsInGross = serviceType?.counts_in_gross ?? true;
+
+        // Só soma no faturamento se counts_in_gross for true
+        if (countsInGross) {
+          boxServiceTotalCents += totalCents;
+        }
         boxServiceQuantity += quantity;
 
         const aggregate =
@@ -455,7 +485,17 @@ const AdminDashboard = () => {
       monthly.serviceQuantity += boxServiceQuantity;
     });
 
-    variableExpenses.forEach((expense) => {
+    // Filtra despesas variáveis: se o mês tem fechamento, só conta despesas do fechamento
+    const variableExpensesToProcess = variableExpenses.filter((expense) => {
+      const monthKey = monthKeyFrom(expense.cash_box.date);
+      const hasClosure = monthsWithClosure.has(monthKey);
+      if (!hasClosure) return true; // Sem fechamento, conta todas as despesas
+      
+      // Com fechamento, só conta despesas que vêm do fechamento (caixa com note "Fechamento manual")
+      return expense.cash_box.note && expense.cash_box.note.startsWith('Fechamento manual');
+    });
+
+    variableExpensesToProcess.forEach((expense) => {
       const amount = expense.amount_cents ?? 0;
       if (amount <= 0) return;
       totalVariableCents += amount;
@@ -528,7 +568,12 @@ const AdminDashboard = () => {
       (a, b) => b.valueCents - a.valueCents,
     );
 
-    const totalValueCents = servicesArray.reduce((acc, item) => acc + item.valueCents, 0);
+    // Calcula totalValueCents somando apenas os serviços que contam no faturamento (counts_in_gross = true)
+    // Isso é feito somando os monthly.serviceCents que já foram calculados corretamente
+    const totalValueCents = Array.from(monthlyAggregates.values()).reduce(
+      (acc, month) => acc + month.serviceCents,
+      0,
+    );
     const totalQuantity = servicesArray.reduce((acc, item) => acc + item.quantity, 0);
     const avgTicketCents = totalQuantity > 0 ? Math.round(totalValueCents / totalQuantity) : 0;
 
@@ -671,7 +716,12 @@ const AdminDashboard = () => {
     const boxes = previousCashBoxesQuery.data ?? [];
     const totalValueCents = boxes.reduce((sum, box) => {
       const services = box.cash_box_services ?? [];
-      return sum + services.reduce((s, svc) => s + (svc.total_cents ?? 0), 0);
+      return sum + services.reduce((s, svc) => {
+        // Verifica se o serviço conta no faturamento (counts_in_gross)
+        const countsInGross = svc.service_types?.counts_in_gross ?? true;
+        if (!countsInGross) return s;
+        return s + (svc.total_cents ?? 0);
+      }, 0);
     }, 0);
     const totalQuantity = boxes.reduce((sum, box) => {
       const services = box.cash_box_services ?? [];
