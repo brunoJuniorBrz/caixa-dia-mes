@@ -309,10 +309,6 @@ export function CashBoxForm({ mode, cashBoxId }: CashBoxFormProps) {
 
   const handleCancel = () => navigate('/dashboard');
 
-  const handleGeneratePdf = () => {
-    toast.info('Geração de PDF estará disponível em breve.');
-  };
-
   const isSubmitting = mutation.isPending;
   const isDeleting = deleteMutation.isPending;
 
@@ -772,18 +768,9 @@ export function CashBoxForm({ mode, cashBoxId }: CashBoxFormProps) {
         </Card>
 
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-3">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={handleGeneratePdf}
-            >
-              Gerar PDF
-            </Button>
-            <Button type="button" variant="outline" onClick={handleCancel}>
-              Cancelar
-            </Button>
-          </div>
+          <Button type="button" variant="outline" onClick={handleCancel}>
+            Cancelar
+          </Button>
 
           <Button
             type="submit"

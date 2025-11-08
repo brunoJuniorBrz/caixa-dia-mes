@@ -10,10 +10,10 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { MoneyInput } from '@/components/MoneyInput';
-import { Loader2, ArrowLeft, Plus, Trash2, ClipboardList } from 'lucide-react';
+import { Loader2, Plus, Trash2, ClipboardList, LogOut, Calendar, BarChart3, DollarSign, Pencil } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { formatCurrency } from '@/lib/money';
-import { fetchStores, fetchMonthlyClosure, upsertMonthlyClosure } from '@/features/admin/api';
+import { fetchStores, fetchMonthlyClosure, upsertMonthlyClosure, deleteMonthlyClosure } from '@/features/admin/api';
 import type { Store } from '@/types/database';
 import type { MonthlyClosureData, MonthlyClosurePayload } from '@/features/admin/types';
 import { SERVICE_BADGE_CLASSNAME, SERVICE_ICON_MAP } from '@/features/cash-box/constants';
@@ -24,6 +24,7 @@ interface VariableExpenseDraft {
   id?: string;
   title: string;
   amount_cents: number;
+  source?: string;
 }
 
 function parseMonth(month: string): Date {
@@ -33,14 +34,16 @@ function parseMonth(month: string): Date {
 export default function AdminMonthlyClosure() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { user } = useAuth();
+  const { user, signOut } = useAuth();
 
   const [selectedStore, setSelectedStore] = useState<string | 'all'>('all');
   const [selectedMonth, setSelectedMonth] = useState<string>('');
   const [serviceQuantities, setServiceQuantities] = useState<Record<string, number>>({});
   const [variableExpenses, setVariableExpenses] = useState<VariableExpenseDraft[]>([]);
   const [showExpenseDialog, setShowExpenseDialog] = useState(false);
-  const [expenseDraft, setExpenseDraft] = useState<VariableExpenseDraft>({ title: '', amount_cents: 0 });
+  const [expenseDraft, setExpenseDraft] = useState<VariableExpenseDraft>({ title: '', amount_cents: 0, source: 'avulsa' });
+  const [editingExpenseIndex, setEditingExpenseIndex] = useState<number | null>(null);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
 
   const monthLabel = useMemo(() => {
     if (!selectedMonth) return MONTH_PLACEHOLDER;
@@ -76,10 +79,31 @@ export default function AdminMonthlyClosure() {
     },
   });
 
+  const deleteClosureMutation = useMutation({
+    mutationFn: (cashBoxId: string) => deleteMonthlyClosure(cashBoxId),
+    onSuccess: () => {
+      toast.success('Fechamento mensal excluído.');
+      setShowDeleteDialog(false);
+      setServiceQuantities({});
+      setVariableExpenses([]);
+      resetExpenseDraft();
+      setEditingExpenseIndex(null);
+      void queryClient.invalidateQueries({
+        queryKey: ['admin-monthly-closure', storeId, selectedMonth, user?.id],
+      });
+    },
+    onError: (error: unknown) => {
+      console.error('Erro ao excluir fechamento mensal:', error);
+      toast.error('Não foi possível excluir o fechamento.');
+    },
+  });
+
   useEffect(() => {
     if (!closureData) {
       setServiceQuantities({});
       setVariableExpenses([]);
+      setEditingExpenseIndex(null);
+      setExpenseDraft({ title: '', amount_cents: 0, source: 'avulsa' });
       return;
     }
 
@@ -89,13 +113,24 @@ export default function AdminMonthlyClosure() {
     }, {});
 
     setServiceQuantities(quantities);
+
+    const shouldUseDefaults =
+      !closureData.cashBoxId &&
+      closureData.defaultExpenses.length > 0 &&
+      closureData.expenses.length === 0;
+
+    const expensesSource = shouldUseDefaults ? closureData.defaultExpenses : closureData.expenses;
+
     setVariableExpenses(
-      closureData.expenses.map((expense) => ({
+      expensesSource.map((expense) => ({
         id: expense.id,
         title: expense.title,
         amount_cents: expense.amount_cents,
+        source: expense.source ?? 'avulsa',
       })),
     );
+    setEditingExpenseIndex(null);
+    setExpenseDraft({ title: '', amount_cents: 0, source: 'avulsa' });
   }, [closureData]);
 
   const handleQuantityChange = (serviceId: string, quantity: number) => {
@@ -106,17 +141,69 @@ export default function AdminMonthlyClosure() {
     }));
   };
 
+  const resetExpenseDraft = () => setExpenseDraft({ title: '', amount_cents: 0, source: 'avulsa' });
+
   const handleRemoveExpense = (index: number) => {
     setVariableExpenses((prev) => prev.filter((_, idx) => idx !== index));
+    if (editingExpenseIndex === index) {
+      setEditingExpenseIndex(null);
+      resetExpenseDraft();
+      setShowExpenseDialog(false);
+    }
   };
 
-  const handleAddExpense = () => {
+  const handleOpenExpenseDialog = (index: number | null = null) => {
+    if (index === null) {
+      setEditingExpenseIndex(null);
+      resetExpenseDraft();
+    } else {
+      const target = variableExpenses[index];
+      if (target) {
+        setExpenseDraft({
+          id: target.id,
+          title: target.title,
+          amount_cents: target.amount_cents,
+          source: target.source ?? 'avulsa',
+        });
+        setEditingExpenseIndex(index);
+      }
+    }
+    setShowExpenseDialog(true);
+  };
+
+  const handlePersistExpense = () => {
     if (!expenseDraft.title.trim() || expenseDraft.amount_cents <= 0) {
       toast.error('Informe título e valor maior que zero.');
       return;
     }
-    setVariableExpenses((prev) => [...prev, { ...expenseDraft }]);
-    setExpenseDraft({ title: '', amount_cents: 0 });
+
+    if (editingExpenseIndex !== null) {
+      setVariableExpenses((prev) =>
+        prev.map((expense, idx) =>
+          idx === editingExpenseIndex
+            ? {
+                ...expense,
+                title: expenseDraft.title.trim(),
+                amount_cents: expenseDraft.amount_cents,
+                source: expenseDraft.source ?? expense.source,
+              }
+            : expense,
+        ),
+      );
+    } else {
+      setVariableExpenses((prev) => [
+        ...prev,
+        {
+          id: expenseDraft.id,
+          title: expenseDraft.title.trim(),
+          amount_cents: expenseDraft.amount_cents,
+          source: expenseDraft.source ?? 'avulsa',
+        },
+      ]);
+    }
+
+    resetExpenseDraft();
+    setEditingExpenseIndex(null);
     setShowExpenseDialog(false);
   };
 
@@ -150,6 +237,11 @@ export default function AdminMonthlyClosure() {
     upsertClosure.mutate(payload);
   };
 
+  const handleConfirmDelete = () => {
+    if (!closureData?.cashBoxId) return;
+    deleteClosureMutation.mutate(closureData.cashBoxId);
+  };
+
   const services = closureData?.serviceCatalog ?? [];
   const totalServicesCents = services.reduce((acc, service) => {
     const quantity = serviceQuantities[service.id] ?? 0;
@@ -157,26 +249,86 @@ export default function AdminMonthlyClosure() {
   }, 0);
   const totalExpensesCents = variableExpenses.reduce((acc, expense) => acc + expense.amount_cents, 0);
   const netTotalCents = totalServicesCents - totalExpensesCents;
+  const defaultExpensesCount = closureData?.defaultExpenses.length ?? 0;
+  const hasLoadedDefaultExpenses = !closureData?.cashBoxId && defaultExpensesCount > 0;
+  const canDeleteClosure = Boolean(closureData?.cashBoxId);
 
   return (
-    <div className="min-h-screen bg-background p-6">
-      <div className="mx-auto flex w-full max-w-5xl flex-col gap-6">
-        <header className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+    <div className="flex h-screen overflow-hidden bg-[#f5f5f7]">
+      {/* Sidebar */}
+      <aside className="flex w-64 flex-col border-r border-slate-200 bg-white">
+        <div className="flex items-center gap-3 border-b border-slate-200 px-6 py-5">
+          <div className="rounded-xl bg-gradient-to-br from-cyan-50 to-blue-50 p-2 shadow-sm">
+            <img src="/logo.png" alt="TOP Vistorias" className="h-8 w-8 object-contain" />
+          </div>
           <div>
-            <Button variant="ghost" className="mb-2 flex items-center gap-2 px-0" onClick={() => navigate('/admin')}>
-              <ArrowLeft className="h-4 w-4" />
-              Voltar
-            </Button>
-            <h1 className="text-3xl font-bold text-slate-900">Fechamento Mensal</h1>
-            <p className="text-muted-foreground">
-              Lance quantidades dos serviços e despesas variáveis para meses anteriores sem fechar.
-            </p>
+            <p className="text-sm font-semibold text-slate-900">TOP Vistorias</p>
+            <p className="text-xs text-slate-500">Fechamento</p>
           </div>
-          <div className="flex flex-col items-end gap-2 text-right">
-            <span className="text-xs uppercase text-muted-foreground">Mês selecionado</span>
-            <span className="text-sm font-semibold text-slate-900">{monthLabel}</span>
+        </div>
+
+        <div className="border-b border-slate-200 px-6 py-4">
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Usuário</p>
+          <p className="mt-1 text-sm font-medium text-slate-900">{user?.name || user?.email || 'Usuário'}</p>
+        </div>
+
+        <nav className="flex-1 space-y-1 px-3 py-4">
+          <button
+            onClick={() => navigate('/admin')}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
+          >
+            <BarChart3 className="h-5 w-5" />
+            Dashboard
+          </button>
+          <button
+            onClick={() => navigate('/admin/historico')}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
+          >
+            <BarChart3 className="h-5 w-5" />
+            Histórico
+          </button>
+          <button
+            onClick={() => navigate('/admin/fechamento')}
+            className="flex w-full items-center gap-3 rounded-lg bg-slate-100 px-3 py-2.5 text-sm font-medium text-slate-900 transition-colors hover:bg-slate-200"
+          >
+            <Calendar className="h-5 w-5" />
+            Fechamento Mensal
+          </button>
+          <button
+            onClick={() => navigate('/admin/receber')}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
+          >
+            <DollarSign className="h-5 w-5" />
+            A Receber
+          </button>
+        </nav>
+
+        <div className="border-t border-slate-200 p-3">
+          <button
+            onClick={signOut}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-red-600 transition-colors hover:bg-red-50"
+          >
+            <LogOut className="h-5 w-5" />
+            Sair
+          </button>
+        </div>
+      </aside>
+
+      {/* Main Content */}
+      <main className="flex-1 overflow-y-auto">
+        <div className="mx-auto max-w-5xl space-y-6 p-8">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-3xl font-semibold text-slate-900">Fechamento Mensal</h1>
+              <p className="mt-1 text-sm text-slate-600">
+                Lance quantidades dos serviços e despesas variáveis para meses anteriores sem fechar.
+              </p>
+            </div>
+            <div className="text-right">
+              <span className="text-xs font-medium uppercase tracking-wide text-slate-400">Mês selecionado</span>
+              <p className="mt-1 text-sm font-semibold text-slate-900">{monthLabel}</p>
+            </div>
           </div>
-        </header>
 
         <Card>
           <CardHeader>
@@ -317,12 +469,17 @@ export default function AdminMonthlyClosure() {
                     Valores lançados aqui serão vinculados ao fechamento mensal manual.
                   </p>
                 </div>
-                <Button type="button" onClick={() => setShowExpenseDialog(true)} variant="outline" className="gap-2">
+                <Button type="button" onClick={() => handleOpenExpenseDialog(null)} variant="outline" className="gap-2">
                   <Plus className="h-4 w-4" />
                   Adicionar despesa
                 </Button>
               </CardHeader>
               <CardContent>
+                {hasLoadedDefaultExpenses && (
+                  <div className="mb-4 rounded-md bg-slate-50 p-3 text-xs text-slate-600">
+                    Carregamos automaticamente {defaultExpensesCount} despesas cadastradas para {monthLabel}. Revise, ajuste ou exclua antes de salvar.
+                  </div>
+                )}
                 {variableExpenses.length === 0 ? (
                   <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
                     Nenhuma despesa lançada para este mês.
@@ -331,7 +488,7 @@ export default function AdminMonthlyClosure() {
                   <div className="space-y-3">
                     {variableExpenses.map((expense, index) => (
                       <div
-                        key={`${expense.title}-${index}`}
+                        key={expense.id ?? `${expense.title}-${index}`}
                         className="flex flex-col gap-3 rounded-md border p-4 md:flex-row md:items-center md:justify-between"
                       >
                         <div>
@@ -339,17 +496,34 @@ export default function AdminMonthlyClosure() {
                           <p className="text-sm text-muted-foreground">
                             {formatCurrency(expense.amount_cents)}
                           </p>
+                          {expense.source === 'fixa' && (
+                            <span className="mt-1 inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+                              Despesa fixa
+                            </span>
+                          )}
                         </div>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="gap-2 text-destructive hover:text-destructive"
-                          onClick={() => handleRemoveExpense(index)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                          Remover
-                        </Button>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="gap-2 text-slate-600 hover:text-slate-900"
+                            onClick={() => handleOpenExpenseDialog(index)}
+                          >
+                            <Pencil className="h-4 w-4" />
+                            Editar
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="gap-2 text-destructive hover:text-destructive"
+                            onClick={() => handleRemoveExpense(index)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            Remover
+                          </Button>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -357,7 +531,18 @@ export default function AdminMonthlyClosure() {
               </CardContent>
             </Card>
 
-            <div className="flex flex-col gap-3 md:flex-row md:justify-end">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              {canDeleteClosure && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="text-destructive hover:bg-destructive/10"
+                  onClick={() => setShowDeleteDialog(true)}
+                  disabled={deleteClosureMutation.isPending || upsertClosure.isPending}
+                >
+                  {deleteClosureMutation.isPending ? 'Excluindo...' : 'Excluir fechamento'}
+                </Button>
+              )}
               <Button
                 type="button"
                 onClick={handleSave}
@@ -396,12 +581,31 @@ export default function AdminMonthlyClosure() {
               <Button variant="outline" onClick={() => setShowExpenseDialog(false)}>
                 Cancelar
               </Button>
-              <Button onClick={handleAddExpense}>Adicionar</Button>
+              <Button onClick={handlePersistExpense}>Adicionar</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
-      </div>
+        <Dialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Excluir fechamento</DialogTitle>
+              <DialogDescription>Essa acao remove o fechamento do mes selecionado e permite refazer os lancamentos.</DialogDescription>
+            </DialogHeader>
+            <p className="text-sm text-slate-600">Tem certeza que deseja excluir o fechamento de {monthLabel}? Essa acao nao pode ser desfeita.</p>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setShowDeleteDialog(false)}>Cancelar</Button>
+              <Button variant="destructive" onClick={handleConfirmDelete} disabled={deleteClosureMutation.isPending}>
+                {deleteClosureMutation.isPending ? 'Excluindo...' : 'Excluir fechamento'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+        </div>
+      </main>
     </div>
   );
 }
+
+
+
 

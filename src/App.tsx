@@ -2,17 +2,19 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "./hooks/useAuth";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import Login from "./pages/Login";
+import Index from "./pages/Index";
 import Dashboard from "./pages/Dashboard";
+import Historico from "./pages/Historico";
+import Receber from "./pages/Receber";
 import NotFound from "./pages/NotFound";
 import CashBoxNew from "./pages/CashBoxNew";
 import CashBoxEdit from "./pages/CashBoxEdit";
 import AdminDashboard from "./pages/AdminDashboard";
 import AdminMonthlyClosure from "./pages/AdminMonthlyClosure";
-import AdminMetrics from "./pages/AdminMetrics";
 
 const queryClient = new QueryClient();
 
@@ -24,12 +26,29 @@ const App = () => (
           <Toaster />
           <Sonner />
           <Routes>
+            <Route path="/" element={<Index />} />
             <Route path="/login" element={<Login />} />
             <Route
               path="/dashboard"
               element={
                 <ProtectedRoute requireRole="vistoriador">
                   <Dashboard />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/historico"
+              element={
+                <ProtectedRoute requireRole="vistoriador">
+                  <Historico />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/receber"
+              element={
+                <ProtectedRoute requireRole="vistoriador">
+                  <Receber />
                 </ProtectedRoute>
               }
             />
@@ -49,7 +68,6 @@ const App = () => (
                 </ProtectedRoute>
               }
             />
-            <Route path="/" element={<Navigate to="/login" replace />} />
             <Route
               path="/admin"
               element={
@@ -67,10 +85,18 @@ const App = () => (
               }
             />
             <Route
-              path="/admin/metricas"
+              path="/admin/historico"
               element={
                 <ProtectedRoute requireRole="admin">
-                  <AdminMetrics />
+                  <Historico />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/receber"
+              element={
+                <ProtectedRoute requireRole="admin">
+                  <Receber />
                 </ProtectedRoute>
               }
             />

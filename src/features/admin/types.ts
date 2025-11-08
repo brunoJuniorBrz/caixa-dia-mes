@@ -6,6 +6,7 @@ import type {
   ServiceType,
   Store,
   AppUser,
+  ExpenseSource,
 } from '@/types/database';
 
 export interface CashBoxWithRelations extends CashBox {
@@ -70,6 +71,7 @@ export interface MonthlyClosureExpenseEntry {
   id?: string;
   title: string;
   amount_cents: number;
+  source?: ExpenseSource;
 }
 
 export interface MonthlyClosureData {
@@ -77,6 +79,7 @@ export interface MonthlyClosureData {
   month: string;
   services: MonthlyClosureServiceEntry[];
   expenses: MonthlyClosureExpenseEntry[];
+  defaultExpenses: MonthlyClosureExpenseEntry[];
   serviceCatalog: ServiceType[];
 }
 

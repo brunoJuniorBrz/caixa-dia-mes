@@ -300,12 +300,31 @@ export async function fetchMonthlyClosure({
       month,
       services: [],
       expenses: [],
+      defaultExpenses: [],
       serviceCatalog,
     };
   }
 
   const { startDate, endDate } = getMonthRange(month);
   const note = buildMonthlyClosureNote(month);
+
+  const { data: defaultExpensesData, error: defaultExpensesError } = await supabase
+    .from('monthly_expenses')
+    .select('id, title, amount_cents, source')
+    .eq('store_id', storeId)
+    .eq('month_year', startDate)
+    .order('title', { ascending: true });
+
+  if (defaultExpensesError) {
+    throw defaultExpensesError;
+  }
+
+  const defaultExpenses = (defaultExpensesData ?? []).map((expense) => ({
+    id: expense.id ?? undefined,
+    title: expense.title,
+    amount_cents: expense.amount_cents ?? 0,
+    source: expense.source,
+  }));
 
   const { data, error } = await supabase
     .from('cash_boxes')
@@ -332,6 +351,7 @@ export async function fetchMonthlyClosure({
       month,
       services: [],
       expenses: [],
+      defaultExpenses,
       serviceCatalog,
     };
   }
@@ -344,6 +364,7 @@ export async function fetchMonthlyClosure({
     month,
     services,
     expenses,
+    defaultExpenses,
     serviceCatalog,
   };
 }
@@ -477,3 +498,9 @@ export async function upsertMonthlyClosure({
   }
 }
 
+export async function deleteMonthlyClosure(cashBoxId: string): Promise<void> {
+  const { error } = await supabase.from('cash_boxes').delete().eq('id', cashBoxId);
+  if (error) {
+    throw error;
+  }
+}

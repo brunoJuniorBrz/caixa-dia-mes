@@ -1,114 +1,95 @@
-﻿import { useEffect, useMemo, useState } from 'react';
+﻿import { useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { addDays, formatISO, subDays } from 'date-fns';
-import { toast } from 'sonner';
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from '@/components/ui/tabs';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
+import { useQuery } from '@tanstack/react-query';
+import { subDays, formatISO, format, parseISO, differenceInDays, startOfMonth, endOfMonth, startOfDay, endOfDay } from 'date-fns';
+import html2canvas from 'html2canvas';
+import jsPDF from 'jspdf';
+import { Download, Loader2, LogOut, Calendar, BarChart3, DollarSign } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { MoneyInput } from '@/components/MoneyInput';
-import { formatCurrency } from '@/lib/money';
-import { formatDate } from '@/lib/date';
-import { useForm, Controller } from 'react-hook-form';
-import type { SubmitHandler } from 'react-hook-form';
-import { Loader2, Edit, Plus, Trash2, LogOut, Search, CheckCircle, BadgeCheck, Calendar, BarChart3 } from 'lucide-react';
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
-import { Checkbox } from '@/components/ui/checkbox';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import {
   fetchStores,
   fetchUsers,
   fetchCashBoxesByRange,
   fetchFixedExpenses,
   fetchVariableExpenses,
-  upsertFixedExpense,
-  deleteFixedExpense,
-  updateVariableExpense,
-  deleteVariableExpense,
-  createVariableExpense,
 } from '@/features/admin/api';
-import { summarizeCashBoxes, formatCurrencyFromCents } from '@/features/admin/utils';
-import type { AdminFilters, FixedExpenseRecord, VariableExpenseRecord } from '@/features/admin/types';
-import type { Store, AppUser, Receivable, PaymentMethod } from '@/types/database';
+import type {
+  AdminFilters,
+  CashBoxWithRelations,
+  FixedExpenseRecord,
+  VariableExpenseRecord,
+} from '@/features/admin/types';
+import { fetchServiceTypes } from '@/features/cash-box/api';
+import type { ServiceType } from '@/types/database';
+import { formatCurrencyFromCents } from '@/features/admin/utils';
+import { formatDate } from '@/lib/date';
 import { useAuth } from '@/hooks/useAuth';
-import { supabase } from '@/integrations/supabase/client';
+import { KpiCard } from '@/components/KpiCard';
+import { InsightsIA } from '@/components/InsightsIA';
+import { AlertsList, type AlertItem } from '@/components/AlertsList';
+import { ChartPareto } from '@/components/charts/ChartPareto';
+import { ChartWaterfall } from '@/components/charts/ChartWaterfall';
+import { ChartHeatmap } from '@/components/charts/ChartHeatmap';
+import { DetailModal } from '@/components/DetailModal';
+import { formatCurrency, formatPercent } from '@/utils/format';
 
-type TabValue = 'overview' | 'cash';
-
-interface ExpenseFormValues {
+interface MetricCardProps {
   title: string;
-  amount: number;
-  storeId: string | '';
-  month: string;
+  value: string;
+  helper?: string;
 }
 
-interface VariableExpenseFormValues {
-  cashBoxId: string;
-  title: string;
-  amount: number;
+interface ServiceAggregate {
+  id: string;
+  name: string;
+  code?: string | null;
+  quantity: number;
+  valueCents: number;
+  avgValueCents: number;
 }
 
-interface VariableExpenseDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  cashBoxes: Array<{ id: string; label: string }>;
-  expense: VariableExpenseRecord | null;
-  onSubmit: (values: VariableExpenseFormValues) => void;
-  isSaving: boolean;
+interface StoreAggregate {
+  storeId: string;
+  name: string;
+  valueCents: number;
+  quantity: number;
 }
 
-type ListMode = 'all' | 'top5' | 'top10' | 'highest' | 'lowest';
-
-interface ReceivableWithPayments extends Receivable {
-  receivable_payments: Array<{
+interface ExpenseAggregate {
     id: string;
-    paid_on: string;
-    amount_cents: number;
-    method?: PaymentMethod;
-  }>;
+  name: string;
+  totalCents: number;
+  occurrences: number;
+  storeName?: string;
+  monthLabel?: string;
 }
 
-function getTodayISO(): string {
-  return formatISO(new Date(), { representation: 'date' });
-}
-
-const RECEIVABLE_STATUS_STYLES: Record<Receivable['status'], { label: string; badgeClass: string }> = {
-  aberto: { label: 'Aberto', badgeClass: 'bg-amber-100 text-amber-800' },
-  pago_pendente_baixa: { label: 'Pago (pendente baixa)', badgeClass: 'bg-blue-100 text-blue-800' },
-  baixado: { label: 'Baixado', badgeClass: 'bg-emerald-100 text-emerald-800' },
-};
-
-function applyViewMode<T extends { amount_cents: number }>(items: T[], mode: ListMode): T[] {
-  const sortedDesc = [...items].sort((a, b) => b.amount_cents - a.amount_cents);
-  switch (mode) {
-    case 'top5':
-      return sortedDesc.slice(0, 5);
-    case 'top10':
-      return sortedDesc.slice(0, 10);
-    case 'highest':
-      return sortedDesc;
-    case 'lowest':
-      return [...items].sort((a, b) => a.amount_cents - b.amount_cents);
-    default:
-      return items;
-  }
+interface PeriodPerformance {
+  monthKey: string;
+  label: string;
+  serviceCents: number;
+  variableCents: number;
+  fixedCents: number;
+  netCents: number;
+  serviceQuantity: number;
 }
 
 function getDefaultDateRange(): { start: string; end: string } {
@@ -120,81 +101,206 @@ function getDefaultDateRange(): { start: string; end: string } {
   };
 }
 
-export default function AdminDashboard() {
-  const queryClient = useQueryClient();
+type PeriodPreset = 'hoje' | '7dias' | '30dias' | 'esteMes' | 'mesAnterior';
+
+function getPeriodPreset(preset: PeriodPreset): { start: string; end: string } {
+  const today = new Date();
+  const now = endOfDay(today);
+  
+  switch (preset) {
+    case 'hoje':
+      return {
+        start: formatISO(startOfDay(today), { representation: 'date' }),
+        end: formatISO(now, { representation: 'date' }),
+      };
+    case '7dias':
+      return {
+        start: formatISO(startOfDay(subDays(today, 6)), { representation: 'date' }),
+        end: formatISO(now, { representation: 'date' }),
+      };
+    case '30dias':
+      return {
+        start: formatISO(startOfDay(subDays(today, 29)), { representation: 'date' }),
+        end: formatISO(now, { representation: 'date' }),
+      };
+    case 'esteMes':
+      return {
+        start: formatISO(startOfMonth(today), { representation: 'date' }),
+        end: formatISO(endOfMonth(today), { representation: 'date' }),
+      };
+    case 'mesAnterior': {
+      const lastMonth = subDays(startOfMonth(today), 1);
+      return {
+        start: formatISO(startOfMonth(lastMonth), { representation: 'date' }),
+        end: formatISO(endOfMonth(lastMonth), { representation: 'date' }),
+      };
+    }
+    default:
+      return getDefaultDateRange();
+  }
+}
+
+function parseMonth(value: string): Date {
+  if (!value) return new Date();
+  const normalized = value.length === 7 ? `${value}-01` : value;
+  return parseISO(normalized);
+}
+
+function monthKeyFrom(date: string): string {
+  return format(parseMonth(date), 'yyyy-MM');
+}
+
+function monthLabelFrom(date: string): string {
+  return format(parseMonth(date), "MMMM 'de' yyyy");
+}
+
+function normalizeText(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+}
+
+function matchesSearchTerm(search: string, ...targets: Array<string | undefined | null>): boolean {
+  const normalizedSearch = normalizeText(search).trim();
+  if (!normalizedSearch) {
+    return true;
+  }
+
+  const tokens = normalizedSearch.split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) {
+    return true;
+  }
+
+  return targets.some((target) => {
+    if (!target) return false;
+    const normalizedTarget = normalizeText(target);
+    return tokens.every((token) => normalizedTarget.includes(token));
+  });
+}
+
+function calculateDelta(current: number, previous: number): number {
+  if (previous === 0) return current > 0 ? 100 : 0;
+  return ((current - previous) / previous) * 100;
+}
+
+function generateSparkline(data: CashBoxWithRelations[], days: number, getValue: (box: CashBoxWithRelations) => number): number[] {
+  const endDate = new Date();
+  const sparkline: number[] = [];
+  
+  for (let i = days - 1; i >= 0; i--) {
+    const targetDate = subDays(endDate, i);
+    const dateStr = formatISO(targetDate, { representation: 'date' });
+    const dayBoxes = data.filter((box) => box.date === dateStr);
+    const dayValue = dayBoxes.reduce((sum, box) => sum + getValue(box), 0);
+    sparkline.push(dayValue);
+  }
+  
+  return sparkline;
+}
+
+const AdminDashboard = () => {
   const navigate = useNavigate();
-  const { start, end } = getDefaultDateRange();
   const { user, signOut } = useAuth();
   const userDisplayName = user?.name || user?.email || 'Usuário';
-  const canManageReceivables = user?.role === 'admin';
+  const defaultRange = getDefaultDateRange();
 
-  const [filters, setFilters] = useState<AdminFilters>({
+  const createInitialFilters = () =>
+    ({
     storeId: null,
     vistoriadorId: null,
-    startDate: start,
-    endDate: end,
-  });
+      startDate: defaultRange.start,
+      endDate: defaultRange.end,
+    }) satisfies AdminFilters;
 
-  const [tab, setTab] = useState<TabValue>('overview');
-  const [isExpenseDialogOpen, setExpenseDialogOpen] = useState(false);
-  const [editingExpense, setEditingExpense] = useState<FixedExpenseRecord | null>(null);
-  const [fixedExpenseSearch, setFixedExpenseSearch] = useState('');
-  const [cashSearchTerm, setCashSearchTerm] = useState('');
-  const [showEntries, setShowEntries] = useState(true);
-  const [showVariableExpenses, setShowVariableExpenses] = useState(true);
-  const [appliedFilters, setAppliedFilters] = useState<AdminFilters | null>(null);
-  const [variableExpenseSearch, setVariableExpenseSearch] = useState('');
-  const [isVariableDialogOpen, setVariableDialogOpen] = useState(false);
-  const [editingVariableExpense, setEditingVariableExpense] = useState<VariableExpenseRecord | null>(null);
+  const [filters, setFilters] = useState<AdminFilters>(() => createInitialFilters());
+  const [appliedFilters, setAppliedFilters] = useState<AdminFilters>(() => createInitialFilters());
+  const [expenseSearch, setExpenseSearch] = useState('');
+  const exportRef = useRef<HTMLDivElement>(null);
+  const [detailModal, setDetailModal] = useState<{ type: string; open: boolean }>({ type: '', open: false });
 
-  const [activeMonth, setActiveMonth] = useState<string | null>(null);
-  const [fixedViewMode, setFixedViewMode] = useState<ListMode>('top5');
-  const [variableViewMode, setVariableViewMode] = useState<ListMode>('top5');
-  const [receivablesSearch, setReceivablesSearch] = useState('');
-  const [receivablePaymentDialog, setReceivablePaymentDialog] = useState<{
-    receivable: ReceivableWithPayments;
-    amount_cents: number;
-    method: PaymentMethod;
-    paid_on: string;
-  } | null>(null);
-  const [receivableToConfirmBaixa, setReceivableToConfirmBaixa] = useState<ReceivableWithPayments | null>(null);
-
-  const { data: stores = [], isLoading: isLoadingStores } = useQuery<Store[]>({
+  const { data: stores = [] } = useQuery({
     queryKey: ['admin-stores'],
     queryFn: fetchStores,
   });
 
-  const { data: users = [], isLoading: isLoadingUsers } = useQuery<AppUser[]>({
-    queryKey: ['admin-users', filters.storeId],
+  const { data: users = [] } = useQuery({
+    queryKey: ['admin-metrics-users', filters.storeId],
     queryFn: () => fetchUsers(filters.storeId ?? undefined),
   });
 
-  const receivablesQueryKey = [
-    'admin-receivables',
-    appliedFilters?.storeId,
-    appliedFilters?.vistoriadorId,
-    appliedFilters?.startDate,
-    appliedFilters?.endDate,
-  ] as const;
-
-  const cashBoxesQuery = useQuery({
-    queryKey: ['admin-cash-boxes', appliedFilters],
-    queryFn: () => fetchCashBoxesByRange(appliedFilters!),
-    enabled: Boolean(appliedFilters),
+  const { data: serviceCatalog = [] } = useQuery<ServiceType[]>({
+    queryKey: ['admin-metrics-service-types'],
+    queryFn: fetchServiceTypes,
   });
 
-  const fixedExpensesQuery = useQuery({
-    queryKey: ['admin-fixed-expenses', appliedFilters?.storeId, appliedFilters?.startDate, appliedFilters?.endDate],
+  const periodDays = useMemo(() => {
+    if (!appliedFilters?.startDate || !appliedFilters?.endDate) return 0;
+    return differenceInDays(parseISO(appliedFilters.endDate), parseISO(appliedFilters.startDate)) + 1;
+  }, [appliedFilters]);
+
+  const previousPeriodFilters = useMemo(() => {
+    if (!appliedFilters?.startDate || !appliedFilters?.endDate) return null;
+    const start = parseISO(appliedFilters.startDate);
+    const end = parseISO(appliedFilters.endDate);
+    const days = differenceInDays(end, start) + 1;
+    const prevEnd = subDays(start, 1);
+    const prevStart = subDays(prevEnd, days - 1);
+    return {
+      ...appliedFilters,
+      startDate: formatISO(prevStart, { representation: 'date' }),
+      endDate: formatISO(prevEnd, { representation: 'date' }),
+    };
+  }, [appliedFilters]);
+
+  const cashBoxesQuery = useQuery<CashBoxWithRelations[]>({
+    queryKey: [
+      'admin-metrics-cash-boxes',
+      appliedFilters.storeId,
+      appliedFilters.vistoriadorId,
+      appliedFilters.startDate,
+      appliedFilters.endDate,
+  ],
+  queryFn: () => fetchCashBoxesByRange(appliedFilters),
+  enabled: Boolean(appliedFilters?.startDate && appliedFilters?.endDate),
+});
+
+  const previousCashBoxesQuery = useQuery<CashBoxWithRelations[]>({
+    queryKey: [
+      'admin-metrics-cash-boxes-prev',
+      previousPeriodFilters?.storeId,
+      previousPeriodFilters?.vistoriadorId,
+      previousPeriodFilters?.startDate,
+      previousPeriodFilters?.endDate,
+    ],
+    queryFn: () => fetchCashBoxesByRange(previousPeriodFilters!),
+    enabled: Boolean(previousPeriodFilters && appliedFilters?.startDate && appliedFilters?.endDate),
+  });
+
+  const fixedExpensesQuery = useQuery<FixedExpenseRecord[]>({
+    queryKey: [
+      'admin-metrics-fixed-expenses',
+      appliedFilters.storeId,
+      appliedFilters.startDate,
+      appliedFilters.endDate,
+    ],
     queryFn: () =>
       fetchFixedExpenses({
         storeId: appliedFilters?.storeId ?? null,
         startDate: appliedFilters?.startDate ?? '',
         endDate: appliedFilters?.endDate ?? '',
       }),
-    enabled: Boolean(appliedFilters),
+    enabled: Boolean(appliedFilters?.startDate && appliedFilters?.endDate),
   });
-  const variableExpensesQuery = useQuery({
-    queryKey: ['admin-variable-expenses', appliedFilters?.storeId, appliedFilters?.vistoriadorId, appliedFilters?.startDate, appliedFilters?.endDate],
+
+  const variableExpensesQuery = useQuery<VariableExpenseRecord[]>({
+    queryKey: [
+      'admin-metrics-variable-expenses',
+      appliedFilters.storeId,
+      appliedFilters.vistoriadorId,
+      appliedFilters.startDate,
+      appliedFilters.endDate,
+    ],
     queryFn: () =>
       fetchVariableExpenses({
         storeId: appliedFilters?.storeId ?? null,
@@ -202,203 +308,18 @@ export default function AdminDashboard() {
         startDate: appliedFilters?.startDate ?? '',
         endDate: appliedFilters?.endDate ?? '',
       }),
-    enabled: Boolean(appliedFilters),
+    enabled: Boolean(appliedFilters?.startDate && appliedFilters?.endDate),
   });
 
-  const {
-    data: receivables = [],
-    isLoading: isLoadingReceivables,
-    isError: isReceivablesError,
-  } = useQuery<ReceivableWithPayments[]>({
-    queryKey: receivablesQueryKey,
-    queryFn: async () => {
-      if (!appliedFilters) {
-        return [];
-      }
+  const serviceTypeMap = useMemo(() => {
+    const map = new Map<string, ServiceType>();
+    serviceCatalog.forEach((service) => {
+      map.set(service.id, service);
+    });
+    return map;
+  }, [serviceCatalog]);
 
-      let query = supabase
-        .from('receivables')
-        .select('*, receivable_payments(*), service_types(*)')
-        .order('created_at', { ascending: false })
-        .limit(100);
-
-      if (appliedFilters.storeId) {
-        query = query.eq('store_id', appliedFilters.storeId);
-      }
-
-      if (appliedFilters.vistoriadorId) {
-        query = query.eq('created_by_user_id', appliedFilters.vistoriadorId);
-      }
-
-      if (appliedFilters.startDate) {
-        query = query.gte('created_at', `${appliedFilters.startDate}T00:00:00`);
-      }
-
-      if (appliedFilters.endDate) {
-        query = query.lte('created_at', `${appliedFilters.endDate}T23:59:59`);
-      }
-
-      const { data, error } = await query;
-      if (error) {
-        throw error;
-      }
-
-      return (data ?? []) as ReceivableWithPayments[];
-    },
-    enabled: Boolean(appliedFilters),
-  });
-
-  const upsertExpenseMutation = useMutation({
-    mutationFn: upsertFixedExpense,
-    onSuccess: () => {
-      queryClient.invalidateQueries({
-        queryKey: ['admin-fixed-expenses', appliedFilters?.storeId, appliedFilters?.startDate, appliedFilters?.endDate],
-      });
-      toast.success('Despesa fixa salva com sucesso.');
-      setExpenseDialogOpen(false);
-      setEditingExpense(null);
-    },
-    onError: (error: unknown) => {
-      console.error('Erro ao salvar despesa fixa:', error);
-      toast.error('Não foi possível salvar a despesa fixa.');
-    },
-  });
-
-  const deleteExpenseMutation = useMutation({
-    mutationFn: deleteFixedExpense,
-    onSuccess: () => {
-      queryClient.invalidateQueries({
-        queryKey: ['admin-fixed-expenses', appliedFilters?.storeId, appliedFilters?.startDate, appliedFilters?.endDate],
-      });
-      toast.success('Despesa removida.');
-    },
-    onError: (error: unknown) => {
-      console.error('Erro ao remover despesa fixa:', error);
-      toast.error('Não foi possível remover a despesa.');
-    },
-  });
-
-  const updateVariableExpenseMutation = useMutation({
-    mutationFn: ({ id, title, amount_cents }: { id: string; title: string; amount_cents: number }) =>
-      updateVariableExpense(id, { title, amount_cents }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin-variable-expenses', appliedFilters?.storeId, appliedFilters?.vistoriadorId, appliedFilters?.startDate, appliedFilters?.endDate] });
-      queryClient.invalidateQueries({ queryKey: ['admin-cash-boxes', appliedFilters] });
-      toast.success('Despesa variável atualizada.');
-      setVariableDialogOpen(false);
-      setEditingVariableExpense(null);
-    },
-    onError: (error: unknown) => {
-      console.error('Erro ao atualizar despesa variável:', error);
-      toast.error('Não foi possível atualizar a despesa variável.');
-    },
-  });
-
-  const createVariableExpenseMutation = useMutation({
-    mutationFn: ({ cash_box_id, title, amount_cents }: { cash_box_id: string; title: string; amount_cents: number }) =>
-      createVariableExpense({ cash_box_id, title, amount_cents }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin-variable-expenses', appliedFilters?.storeId, appliedFilters?.vistoriadorId, appliedFilters?.startDate, appliedFilters?.endDate] });
-      queryClient.invalidateQueries({ queryKey: ['admin-cash-boxes', appliedFilters] });
-      toast.success('Despesa variável adicionada.');
-      setVariableDialogOpen(false);
-      setEditingVariableExpense(null);
-    },
-    onError: (error: unknown) => {
-      console.error('Erro ao adicionar despesa variável:', error);
-      toast.error('Não foi possível adicionar a despesa variável.');
-    },
-  });
-
-  const registerReceivablePaymentMutation = useMutation({
-    mutationFn: async ({
-      receivable,
-      amount_cents,
-      method,
-      paid_on,
-    }: {
-      receivable: ReceivableWithPayments;
-      amount_cents: number;
-      method: PaymentMethod;
-      paid_on: string;
-    }) => {
-      const { error: paymentError } = await supabase.from('receivable_payments').insert({
-        receivable_id: receivable.id,
-        amount_cents,
-        method,
-        paid_on,
-        recorded_by_user_id: user?.id ?? receivable.created_by_user_id,
-      });
-      if (paymentError) throw paymentError;
-
-      const { error: statusError } = await supabase
-        .from('receivables')
-        .update({ status: 'pago_pendente_baixa' })
-        .eq('id', receivable.id);
-      if (statusError) throw statusError;
-    },
-    onSuccess: () => {
-      toast.success('Pagamento registrado. Status atualizado para aguardando baixa.');
-      setReceivablePaymentDialog(null);
-      queryClient.invalidateQueries({ queryKey: receivablesQueryKey });
-    },
-    onError: (error: unknown) => {
-      console.error('Erro ao registrar pagamento:', error);
-      toast.error('Não foi possível registrar o pagamento.');
-    },
-  });
-
-  const baixaReceivableMutation = useMutation({
-    mutationFn: async (receivableId: string) => {
-      const { error } = await supabase.from('receivables').update({ status: 'baixado' }).eq('id', receivableId);
-      if (error) throw error;
-    },
-    onSuccess: () => {
-      toast.success('Recebível baixado e removido da listagem.');
-      setReceivableToConfirmBaixa(null);
-      queryClient.invalidateQueries({ queryKey: receivablesQueryKey });
-    },
-    onError: (error: unknown) => {
-      console.error('Erro ao dar baixa no recebível:', error);
-      toast.error('Não foi possível concluir a baixa. Tente novamente.');
-    },
-  });
-
-  const isRegisteringPayment = registerReceivablePaymentMutation.isPending;
-  const isBaixandoRecebivel = baixaReceivableMutation.isPending;
-
-  const deleteVariableExpenseMutation = useMutation({
-    mutationFn: deleteVariableExpense,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin-variable-expenses', appliedFilters?.storeId, appliedFilters?.vistoriadorId, appliedFilters?.startDate, appliedFilters?.endDate] });
-      queryClient.invalidateQueries({ queryKey: ['admin-cash-boxes', appliedFilters] });
-      toast.success('Despesa variável removida.');
-    },
-    onError: (error: unknown) => {
-      console.error('Erro ao remover despesa variável:', error);
-      toast.error('Não foi possível remover a despesa variável.');
-    },
-  });
-
-  const monthlySummary = useMemo(() => {
-    if (!cashBoxesQuery.data || !fixedExpensesQuery.data) return [];
-    return summarizeCashBoxes(cashBoxesQuery.data, fixedExpensesQuery.data);
-  }, [cashBoxesQuery.data, fixedExpensesQuery.data]);
-
-  useEffect(() => {
-    if (monthlySummary.length > 0) {
-      setActiveMonth((prev) => {
-        if (prev && monthlySummary.some((month) => month.monthKey === prev)) {
-          return prev;
-        }
-        return monthlySummary[0].monthKey;
-      });
-    } else {
-      setActiveMonth(null);
-    }
-  }, [monthlySummary]);
-
-  const storeMap = useMemo(() => {
+  const storeNameMap = useMemo(() => {
     const map = new Map<string, string>();
     stores.forEach((store) => {
       map.set(store.id, store.name);
@@ -406,284 +327,746 @@ export default function AdminDashboard() {
     return map;
   }, [stores]);
 
-  const filteredReceivables = useMemo(() => {
-    const term = receivablesSearch.trim().toLowerCase();
-    return receivables.filter((receivable) => {
-      if (receivable.status === 'baixado') {
-        return false;
-      }
+  const metrics = useMemo(() => {
+    const boxes = cashBoxesQuery.data ?? [];
+    const fixedExpenses = fixedExpensesQuery.data ?? [];
+    const variableExpenses = variableExpensesQuery.data ?? [];
 
-      if (!term) {
-        return true;
-      }
+    const emptyMetrics = {
+      totalQuantity: 0,
+      totalValueCents: 0,
+      avgTicketCents: 0,
+      services: [] as ServiceAggregate[],
+      topByQuantity: null as ServiceAggregate | null,
+      topByValue: null as ServiceAggregate | null,
+      storeRanking: [] as StoreAggregate[],
+      variableExpensesTotalCents: 0,
+      fixedExpensesTotalCents: 0,
+      netResultCents: 0,
+      variableExpensesTop: [] as ExpenseAggregate[],
+      fixedExpensesTop: [] as ExpenseAggregate[],
+      monthlyPerformance: [] as PeriodPerformance[],
+      bestPeriod: null as PeriodPerformance | null,
+      worstPeriod: null as PeriodPerformance | null,
+      topPeriods: [] as PeriodPerformance[],
+      bottomPeriods: [] as PeriodPerformance[],
+    };
 
-      const storeName = storeMap.get(receivable.store_id) ?? '';
-      const plate = receivable.plate ?? '';
+    if (!boxes.length && !fixedExpenses.length && !variableExpenses.length) {
+      return emptyMetrics;
+    }
 
-      return (
-        receivable.customer_name.toLowerCase().includes(term) ||
-        plate.toLowerCase().includes(term) ||
-        storeName.toLowerCase().includes(term)
-      );
+    const serviceAggregates = new Map<string, ServiceAggregate>();
+    const storeAggregates = new Map<string, StoreAggregate>();
+    const monthlyAggregates = new Map<string, PeriodPerformance>();
+    const variableAggregateMap = new Map<string, ExpenseAggregate>();
+    const fixedAggregateMap = new Map<string, ExpenseAggregate>();
+
+    let totalVariableCents = 0;
+    let totalFixedCents = 0;
+
+    const ensureMonthlyAggregate = (monthKey: string, label: string) => {
+      const current =
+        monthlyAggregates.get(monthKey) ??
+        {
+          monthKey,
+          label,
+          serviceCents: 0,
+          variableCents: 0,
+          fixedCents: 0,
+          netCents: 0,
+          serviceQuantity: 0,
+        };
+      monthlyAggregates.set(monthKey, current);
+      return current;
+    };
+
+    boxes.forEach((box) => {
+      const services = box.cash_box_services ?? [];
+      const monthKey = monthKeyFrom(box.date);
+      const monthLabel = monthLabelFrom(box.date);
+      const monthly = ensureMonthlyAggregate(monthKey, monthLabel);
+
+      let boxServiceTotalCents = 0;
+      let boxServiceQuantity = 0;
+
+      services.forEach((service) => {
+        const quantity = service.quantity ?? 0;
+        if (quantity <= 0) return;
+
+        const serviceTypeId =
+          service.service_type_id ??
+          (service.service_types ? service.service_types.id : null) ??
+          service.id;
+        const serviceType =
+          (service.service_type_id ? serviceTypeMap.get(service.service_type_id) : undefined) ??
+          service.service_types ??
+          null;
+
+        const name = serviceType?.name ?? serviceType?.code ?? 'Servico';
+        const code = serviceType?.code ?? serviceType?.name ?? null;
+        const unitPrice =
+          service.unit_price_cents ??
+          service.total_cents ??
+          serviceType?.default_price_cents ??
+          0;
+        const totalCents = service.total_cents ?? unitPrice * quantity;
+
+        boxServiceTotalCents += totalCents;
+        boxServiceQuantity += quantity;
+
+        const aggregate =
+          serviceAggregates.get(serviceTypeId) ??
+          {
+            id: serviceTypeId,
+            name,
+            code,
+            quantity: 0,
+            valueCents: 0,
+            avgValueCents: 0,
+          };
+
+        aggregate.quantity += quantity;
+        aggregate.valueCents += totalCents;
+        aggregate.avgValueCents =
+          aggregate.quantity > 0 ? Math.round(aggregate.valueCents / aggregate.quantity) : 0;
+
+        serviceAggregates.set(serviceTypeId, aggregate);
+
+        if (box.store_id) {
+          const currentStore =
+            storeAggregates.get(box.store_id) ??
+            {
+              storeId: box.store_id,
+              name: storeNameMap.get(box.store_id) ?? 'Loja',
+              valueCents: 0,
+              quantity: 0,
+            };
+
+          currentStore.valueCents += totalCents;
+          currentStore.quantity += quantity;
+          storeAggregates.set(box.store_id, currentStore);
+        }
+      });
+
+      monthly.serviceCents += boxServiceTotalCents;
+      monthly.serviceQuantity += boxServiceQuantity;
     });
-  }, [receivables, receivablesSearch, storeMap]);
 
-  const receivablesTotalCents = useMemo(
+    variableExpenses.forEach((expense) => {
+      const amount = expense.amount_cents ?? 0;
+      if (amount <= 0) return;
+      totalVariableCents += amount;
+
+      const monthKey = monthKeyFrom(expense.cash_box.date);
+      const monthLabel = monthLabelFrom(expense.cash_box.date);
+      const monthly = ensureMonthlyAggregate(monthKey, monthLabel);
+      monthly.variableCents += amount;
+
+      const key = expense.title.trim() || 'Despesa variavel';
+      const storeName = storeNameMap.get(expense.cash_box.store_id) ?? 'Loja';
+      const aggregate =
+        variableAggregateMap.get(key) ??
+        {
+          id: key,
+          name: key,
+          totalCents: 0,
+          occurrences: 0,
+          storeName,
+          monthLabel,
+        };
+
+      aggregate.totalCents += amount;
+      aggregate.occurrences += 1;
+      aggregate.storeName =
+        aggregate.storeName && aggregate.storeName !== storeName ? 'Diversas lojas' : storeName;
+      aggregate.monthLabel =
+        aggregate.monthLabel && aggregate.monthLabel !== monthLabel ? 'Multiplos períodos' : monthLabel;
+
+      variableAggregateMap.set(key, aggregate);
+    });
+
+    fixedExpenses.forEach((expense) => {
+      const amount = expense.amount_cents ?? 0;
+      if (amount <= 0) return;
+      totalFixedCents += amount;
+
+      const monthKey = monthKeyFrom(expense.month_year);
+      const monthLabel = monthLabelFrom(expense.month_year);
+      const monthly = ensureMonthlyAggregate(monthKey, monthLabel);
+      monthly.fixedCents += amount;
+
+      const key = expense.title.trim() || 'Despesa fixa';
+      const storeName = storeNameMap.get(expense.store_id) ?? 'Loja';
+      const aggregate =
+        fixedAggregateMap.get(key) ??
+        {
+          id: key,
+          name: key,
+          totalCents: 0,
+          occurrences: 0,
+          storeName,
+          monthLabel,
+        };
+
+      aggregate.totalCents += amount;
+      aggregate.occurrences += 1;
+      aggregate.storeName =
+        aggregate.storeName && aggregate.storeName !== storeName ? 'Diversas lojas' : storeName;
+      aggregate.monthLabel =
+        aggregate.monthLabel && aggregate.monthLabel !== monthLabel ? 'Multiplos períodos' : monthLabel;
+
+      fixedAggregateMap.set(key, aggregate);
+    });
+
+    const servicesArray = Array.from(serviceAggregates.values()).sort(
+      (a, b) => b.valueCents - a.valueCents,
+    );
+    const storeArray = Array.from(storeAggregates.values()).sort(
+      (a, b) => b.valueCents - a.valueCents,
+    );
+
+    const totalValueCents = servicesArray.reduce((acc, item) => acc + item.valueCents, 0);
+    const totalQuantity = servicesArray.reduce((acc, item) => acc + item.quantity, 0);
+    const avgTicketCents = totalQuantity > 0 ? Math.round(totalValueCents / totalQuantity) : 0;
+
+    const topByQuantity = [...servicesArray].sort((a, b) => b.quantity - a.quantity)[0] ?? null;
+    const topByValue = servicesArray[0] ?? null;
+
+    const monthlyPerformance = Array.from(monthlyAggregates.values())
+      .map((month) => ({
+        ...month,
+        netCents: month.serviceCents - month.variableCents - month.fixedCents,
+      }))
+      .sort((a, b) => b.netCents - a.netCents);
+
+    const variableExpensesTop = Array.from(variableAggregateMap.values()).sort(
+      (a, b) => b.totalCents - a.totalCents,
+    );
+    const fixedExpensesTop = Array.from(fixedAggregateMap.values()).sort(
+      (a, b) => b.totalCents - a.totalCents,
+    );
+
+    const topPeriods = monthlyPerformance.slice(0, Math.min(3, monthlyPerformance.length));
+    const bottomPeriods = [...monthlyPerformance]
+      .reverse()
+      .slice(0, Math.min(3, monthlyPerformance.length));
+
+    const bestPeriod = monthlyPerformance[0] ?? null;
+    const worstPeriod =
+      monthlyPerformance.length > 0
+        ? monthlyPerformance[monthlyPerformance.length - 1]
+        : null;
+
+    return {
+      totalQuantity,
+      totalValueCents,
+      avgTicketCents,
+      services: servicesArray,
+      topByQuantity,
+      topByValue,
+      storeRanking: storeArray,
+      variableExpensesTotalCents: totalVariableCents,
+      fixedExpensesTotalCents: totalFixedCents,
+      netResultCents: totalValueCents - totalVariableCents - totalFixedCents,
+      variableExpensesTop,
+      fixedExpensesTop,
+      monthlyPerformance,
+      bestPeriod,
+      worstPeriod,
+      topPeriods,
+      bottomPeriods,
+    };
+  }, [
+    cashBoxesQuery.data,
+    serviceTypeMap,
+    storeNameMap,
+    fixedExpensesQuery.data,
+    variableExpensesQuery.data,
+  ]);
+
+  const quantityChartData = useMemo(
     () =>
-      filteredReceivables.reduce(
-        (total, receivable) => total + (receivable.original_amount_cents ?? 0),
-        0,
-      ),
-    [filteredReceivables],
+      metrics.services.slice(0, 12).map((item) => ({
+        service: item.code ? `${item.code}` : item.name,
+        quantity: item.quantity,
+        valueReais: Number((item.valueCents / 100).toFixed(2)),
+        valueCents: item.valueCents,
+      })),
+    [metrics.services],
   );
 
-  useEffect(() => {
-    setReceivablesSearch('');
-  }, [appliedFilters]);
-
-  const filteredFixedExpenses = useMemo(() => {
-    const data = fixedExpensesQuery.data ?? [];
-    const term = fixedExpenseSearch.trim().toLowerCase();
-    if (!term) {
-      return data;
-    }
-    return data.filter((expense) => {
-      const storeName = storeMap.get(expense.store_id) ?? '';
-      return (
-        expense.title.toLowerCase().includes(term) ||
-        storeName.toLowerCase().includes(term) ||
-        formatDate(expense.month_year, 'MMMM/yyyy').toLowerCase().includes(term)
-      );
-    });
-  }, [fixedExpensesQuery.data, fixedExpenseSearch, storeMap]);
-
-  const filteredCashBoxes = useMemo(() => {
-    const data = cashBoxesQuery.data ?? [];
-    const term = cashSearchTerm.trim().toLowerCase();
-
-    return data
-      .map((box) => {
-        const storeName = storeMap.get(box.store_id) ?? 'Loja';
-        const services = (box.cash_box_services ?? []).filter((service) => service.quantity > 0);
-        const expenses = box.cash_box_expenses ?? [];
-
-        const servicesMatches = services.filter((service) => {
-          const serviceName = service.service_types?.name ?? service.service_type_id;
-          return serviceName.toLowerCase().includes(term);
-        });
-
-        const expensesMatches = expenses.filter((expense) =>
-          expense.title.toLowerCase().includes(term),
-        );
-
-        const matches =
-          term.length === 0 ||
-          storeName.toLowerCase().includes(term) ||
-          (box.note ?? '').toLowerCase().includes(term) ||
-          formatDate(box.date).toLowerCase().includes(term) ||
-          servicesMatches.length > 0 ||
-          expensesMatches.length > 0;
-
-        return {
-          box,
-          storeName,
-          services: term.length > 0 ? servicesMatches : services,
-          expenses: term.length > 0 ? expensesMatches : expenses,
-          matches,
-        };
-      })
-      .filter((item) => item.matches && (!activeMonth || item.box.date.startsWith(activeMonth ?? '')));
-  }, [cashBoxesQuery.data, cashSearchTerm, storeMap, activeMonth]);
-
-  const filteredVariableExpenses = useMemo(() => {
-    const data = variableExpensesQuery.data ?? [];
-    const term = variableExpenseSearch.trim().toLowerCase();
-    if (!term) {
-      return data;
-    }
-
-    return data.filter((expense) => {
-      const storeName = storeMap.get(expense.cash_box.store_id) ?? '';
-      const vistoriadorName = expense.cash_box.vistoriador?.name ?? '';
-      return (
-        expense.title.toLowerCase().includes(term) ||
-        storeName.toLowerCase().includes(term) ||
-        vistoriadorName.toLowerCase().includes(term) ||
-        formatDate(expense.cash_box.date).toLowerCase().includes(term)
-      );
-    });
-  }, [variableExpensesQuery.data, variableExpenseSearch, storeMap]);
-
-  const fixedExpensesForMonth = useMemo(() => {
-    const list = filteredFixedExpenses.filter((expense) =>
-      !activeMonth || expense.month_year.startsWith(activeMonth),
-    );
-    return list;
-  }, [filteredFixedExpenses, activeMonth]);
-
-  const displayedFixedExpenses = useMemo(() => {
-    return applyViewMode(fixedExpensesForMonth, fixedViewMode);
-  }, [fixedExpensesForMonth, fixedViewMode]);
-
-  const variableExpensesForMonth = useMemo(() => {
-    const list = filteredVariableExpenses.filter((expense) =>
-      !activeMonth || expense.cash_box.date.startsWith(activeMonth ?? ''),
-    );
-    return list;
-  }, [filteredVariableExpenses, activeMonth]);
-
-  const displayedVariableExpenses = useMemo(() => {
-    return applyViewMode(variableExpensesForMonth, variableViewMode);
-  }, [variableExpensesForMonth, variableViewMode]);
-
-  const handleSearch = () => {
-    if (!filters.startDate || !filters.endDate) {
-      toast.error('Informe data inicial e final.');
-      return;
-    }
-    setActiveMonth(null);
-    setAppliedFilters({ ...filters });
-  };
-
-  const handleClearFilters = () => {
-    const range = getDefaultDateRange();
-    setFilters({
-      storeId: null,
-      vistoriadorId: null,
-      startDate: range.start,
-      endDate: range.end,
-    });
-    setAppliedFilters(null);
-    setActiveMonth(null);
-    setFixedExpenseSearch('');
-    setVariableExpenseSearch('');
-    setCashSearchTerm('');
-  };
-
-  const handleOpenVariableDialog = (expense: VariableExpenseRecord | null = null) => {
-    setEditingVariableExpense(expense);
-    setVariableDialogOpen(true);
-  };
-
-  const handleVariableSubmit = (values: { cashBoxId: string; title: string; amount: number }) => {
-    if (!values.cashBoxId) {
-      toast.error('Selecione o caixa.');
-      return;
-    }
-    if (editingVariableExpense) {
-      updateVariableExpenseMutation.mutate({
-        id: editingVariableExpense.id,
-        title: values.title,
-        amount_cents: values.amount,
-      });
-    } else {
-      createVariableExpenseMutation.mutate({
-        cash_box_id: values.cashBoxId,
-        title: values.title,
-        amount_cents: values.amount,
-      });
-    }
-  };
-
-  const overallTotals = useMemo(() => {
-    return monthlySummary.reduce(
-      (acc, month) => {
-        acc.gross += month.gross;
-        acc.pix += month.pix;
-        acc.cartao += month.cartao;
-        acc.expensesVariable += month.expensesVariable;
-        acc.net += month.net;
-        acc.fixedExpenses += month.fixedExpenses;
-        acc.netAfterFixed += month.netAfterFixed;
-        return acc;
-      },
-      {
-        gross: 0,
-        pix: 0,
-        cartao: 0,
-        expensesVariable: 0,
-        net: 0,
-        fixedExpenses: 0,
-        netAfterFixed: 0,
-      },
-    );
-  }, [monthlySummary]);
-
-  const isLoading =
-    (appliedFilters &&
-      (cashBoxesQuery.isLoading || fixedExpensesQuery.isLoading || variableExpensesQuery.isLoading)) ||
-    isLoadingStores ||
-    isLoadingUsers;
+  const valueChartData = useMemo(
+    () =>
+      metrics.services.slice(0, 12).map((item) => ({
+        service: item.code ? `${item.code}` : item.name,
+        value: Number((item.valueCents / 100).toFixed(2)),
+        valueCents: item.valueCents,
+        quantity: item.quantity,
+      })),
+    [metrics.services],
+  );
 
   const periodLabel = useMemo(() => {
-    if (!appliedFilters) return 'selecione um período';
+    if (!appliedFilters?.startDate || !appliedFilters?.endDate) {
+      return 'Selecione um período';
+    }
     return `${formatDate(appliedFilters.startDate)} a ${formatDate(appliedFilters.endDate)}`;
   }, [appliedFilters]);
 
-  const cashBoxOptions = useMemo(() => {
+  const handleApplyFilters = () => {
+    setAppliedFilters({ ...filters });
+  };
+
+  const handleResetFilters = () => {
+    const freshFilters = createInitialFilters();
+    setFilters(freshFilters);
+    setAppliedFilters(freshFilters);
+  };
+
+  const handlePeriodPreset = (preset: PeriodPreset) => {
+    const range = getPeriodPreset(preset);
+    const newFilters = {
+      ...filters,
+      startDate: range.start,
+      endDate: range.end,
+    };
+    setFilters(newFilters);
+    setAppliedFilters(newFilters);
+  };
+
+  const handleExportPdf = async () => {
+    if (!exportRef.current) return;
+    const canvas = await html2canvas(exportRef.current, {
+      scale: 2,
+      backgroundColor: '#ffffff',
+      useCORS: true,
+    });
+    const imageData = canvas.toDataURL('image/png');
+    const pdf = new jsPDF('p', 'mm', 'a4');
+    const pdfWidth = pdf.internal.pageSize.getWidth();
+    const pdfHeight = pdf.internal.pageSize.getHeight();
+    const imgHeight = (canvas.height * pdfWidth) / canvas.width;
+    let heightLeft = imgHeight;
+    let position = 0;
+
+    pdf.addImage(imageData, 'PNG', 0, position, pdfWidth, imgHeight);
+    heightLeft -= pdfHeight;
+
+    while (heightLeft > 0) {
+      position -= pdfHeight;
+      pdf.addPage();
+      pdf.addImage(imageData, 'PNG', 0, position, pdfWidth, imgHeight);
+      heightLeft -= pdfHeight;
+    }
+
+    const start = appliedFilters.startDate ?? defaultRange.start;
+    const end = appliedFilters.endDate ?? defaultRange.end;
+    pdf.save(`metricas-${start}-${end}.pdf`);
+  };
+
+  const previousMetrics = useMemo(() => {
+    const boxes = previousCashBoxesQuery.data ?? [];
+    const totalValueCents = boxes.reduce((sum, box) => {
+      const services = box.cash_box_services ?? [];
+      return sum + services.reduce((s, svc) => s + (svc.total_cents ?? 0), 0);
+    }, 0);
+    const totalQuantity = boxes.reduce((sum, box) => {
+      const services = box.cash_box_services ?? [];
+      return sum + services.reduce((s, svc) => s + (svc.quantity ?? 0), 0);
+    }, 0);
+    const avgTicketCents = totalQuantity > 0 ? Math.round(totalValueCents / totalQuantity) : 0;
+    const variableCents = boxes.reduce((sum, box) => {
+      const expenses = box.cash_box_expenses ?? [];
+      return sum + expenses.reduce((s, exp) => s + (exp.amount_cents ?? 0), 0);
+    }, 0);
+    return { totalValueCents, totalQuantity, avgTicketCents, variableCents, netResultCents: totalValueCents - variableCents };
+  }, [previousCashBoxesQuery.data]);
+
+  const kpiDeltas = useMemo(() => {
+    return {
+      servicos_pct: calculateDelta(metrics.totalQuantity, previousMetrics.totalQuantity),
+      faturamento_pct: calculateDelta(metrics.totalValueCents, previousMetrics.totalValueCents),
+      ticketMedio_pct: calculateDelta(metrics.avgTicketCents, previousMetrics.avgTicketCents),
+      variaveis_pct: calculateDelta(metrics.variableExpensesTotalCents, previousMetrics.variableCents),
+      fixas_pct: 0,
+      resultado_pct: calculateDelta(metrics.netResultCents, previousMetrics.netResultCents),
+    };
+  }, [metrics, previousMetrics]);
+
+  const sparklines = useMemo(() => {
     const boxes = cashBoxesQuery.data ?? [];
-    return boxes
-      .filter((box) => !activeMonth || box.date.startsWith(activeMonth ?? ''))
-      .map((box) => ({
-        id: box.id,
-        label: `${formatDate(box.date)} â€¢ ${box.note ?? 'Sem descrição'}`,
+    return {
+      faturamento7d: generateSparkline(boxes, 7, (box) => {
+        const services = box.cash_box_services ?? [];
+        return services.reduce((sum, svc) => sum + (svc.total_cents ?? 0), 0);
+      }),
+      ticket7d: generateSparkline(boxes, 7, (box) => {
+        const services = box.cash_box_services ?? [];
+        const total = services.reduce((sum, svc) => sum + (svc.total_cents ?? 0), 0);
+        const qty = services.reduce((sum, svc) => sum + (svc.quantity ?? 0), 0);
+        return qty > 0 ? Math.round(total / qty) : 0;
+      }),
+      resultado7d: generateSparkline(boxes, 7, (box) => {
+        const services = box.cash_box_services ?? [];
+        const expenses = box.cash_box_expenses ?? [];
+        const revenue = services.reduce((sum, svc) => sum + (svc.total_cents ?? 0), 0);
+        const exp = expenses.reduce((sum, exp) => sum + (exp.amount_cents ?? 0), 0);
+        return revenue - exp;
+      }),
+    };
+  }, [cashBoxesQuery.data]);
+
+  const paretoData = useMemo(() => {
+    return metrics.services
+      .slice(0, 10)
+      .map((service) => {
+        const margem = service.valueCents;
+        return {
+          servico: service.code ?? service.name,
+          receita: service.valueCents,
+          margem,
+          acumulada_pct: 0,
+        };
+      })
+      .map((item, idx, arr) => {
+        const total = arr.reduce((sum, i) => sum + i.receita, 0);
+        const acumulada = arr.slice(0, idx + 1).reduce((sum, i) => sum + i.receita, 0);
+        return {
+          ...item,
+          acumulada_pct: total > 0 ? (acumulada / total) * 100 : 0,
+        };
+      });
+  }, [metrics.services]);
+
+  const waterfallData = useMemo(() => {
+    if (metrics.storeRanking.length === 0 && metrics.totalValueCents === 0) return null;
+    const storeName = metrics.storeRanking.length > 0 ? metrics.storeRanking[0].name : 'Consolidado';
+    return {
+      loja: storeName,
+      etapas: [
+        { nome: 'Faturamento', valor: metrics.totalValueCents },
+        { nome: 'Variáveis', valor: -metrics.variableExpensesTotalCents },
+        { nome: 'Fixas', valor: -metrics.fixedExpensesTotalCents },
+        { nome: 'Resultado', valor: metrics.netResultCents },
+      ],
+    };
+  }, [metrics]);
+
+  const heatmapData = useMemo(() => {
+    const boxes = cashBoxesQuery.data ?? [];
+    const heatmap: Record<string, number> = {};
+    boxes.forEach((box) => {
+      const date = parseISO(box.date);
+      const dow = date.getDay();
+      const hora = date.getHours();
+      const key = `${dow}-${hora}`;
+      const services = box.cash_box_services ?? [];
+      const count = services.reduce((sum, svc) => sum + (svc.quantity ?? 0), 0);
+      heatmap[key] = (heatmap[key] ?? 0) + count;
+    });
+    return Object.entries(heatmap).map(([key, vistorias]) => {
+      const [dow, hora] = key.split('-').map(Number);
+      return { dow, hora, vistorias };
+    });
+  }, [cashBoxesQuery.data]);
+
+  const rankingMargem = useMemo(() => {
+    return metrics.services
+      .slice(0, 10)
+      .map((service) => ({
+        servico: service.code ?? service.name,
+        margem: service.valueCents,
+        margem_pct: metrics.totalValueCents > 0 ? (service.valueCents / metrics.totalValueCents) * 100 : 0,
+        deltaMM_pct: 0,
       }));
-  }, [cashBoxesQuery.data, activeMonth]);
+  }, [metrics.services, metrics.totalValueCents]);
+
+  const insightsData = useMemo(() => {
+    const isNegative = metrics.netResultCents < 0;
+    const isLowTicket = metrics.avgTicketCents < 5000;
+    const hasHighExpenses = metrics.variableExpensesTotalCents > metrics.totalValueCents * 0.3;
+    const marginPct = metrics.totalValueCents > 0 
+      ? (metrics.netResultCents / metrics.totalValueCents) * 100 
+      : 0;
+    const isLowMargin = marginPct < 5 && marginPct >= 0;
+    const isGoodMargin = marginPct >= 10;
+    const ticketDelta = kpiDeltas.ticketMedio_pct;
+    
+    const insights: Array<{ id: string; text: string; priority: 'critical' | 'warning' | 'info' | 'positive' }> = [];
+    
+    if (isNegative) {
+      insights.push({
+        id: 'negative-result',
+        text: `Resultado líquido negativo de ${formatCurrency(metrics.netResultCents / 100)}. Revise despesas e receitas.`,
+        priority: 'critical',
+      });
+    }
+    
+    if (hasHighExpenses) {
+      const expensePct = metrics.totalValueCents > 0 
+        ? (metrics.variableExpensesTotalCents / metrics.totalValueCents) * 100 
+        : 0;
+      insights.push({
+        id: 'high-expenses',
+        text: `Despesas variáveis representam ${expensePct.toFixed(1)}% do faturamento (acima de 30%).`,
+        priority: 'warning',
+      });
+    }
+    
+    if (isLowTicket && metrics.totalQuantity > 0) {
+      insights.push({
+        id: 'low-ticket',
+        text: `Ticket médio de ${formatCurrency(metrics.avgTicketCents / 100)} abaixo do esperado.`,
+        priority: 'warning',
+      });
+    }
+    
+    if (isLowMargin && !isNegative) {
+      insights.push({
+        id: 'low-margin',
+        text: `Margem líquida de ${marginPct.toFixed(1)}% está abaixo do ideal (5%).`,
+        priority: 'warning',
+      });
+    }
+    
+    if (ticketDelta > 10) {
+      insights.push({
+        id: 'ticket-increase',
+        text: `Ticket médio aumentou ${ticketDelta.toFixed(1)}% vs período anterior. Estratégia funcionando.`,
+        priority: 'positive',
+      });
+    }
+    
+    if (isGoodMargin && !isNegative) {
+      insights.push({
+        id: 'good-margin',
+        text: `Margem líquida de ${marginPct.toFixed(1)}% está acima de 10%. Performance excelente.`,
+        priority: 'positive',
+      });
+    }
+    
+    return {
+      insights: insights.slice(0, 5),
+      resumo: isNegative
+        ? 'Resultado negativo detectado. Revise despesas e receitas.'
+        : 'Performance estável. Continue monitorando.',
+      principais_causas: [
+        isLowTicket ? 'Ticket médio abaixo do esperado' : '',
+        hasHighExpenses ? 'Despesas variáveis acima de 30% do faturamento' : '',
+      ].filter(Boolean),
+      anomalias: isNegative ? ['Resultado líquido negativo no período'] : [],
+      acoes_prioritarias: isNegative
+        ? [
+            {
+              acao: 'Revisar despesas variáveis',
+              impacto_estimado: 'Alto',
+              dificuldade: 'baixa' as const,
+            },
+          ]
+        : [],
+    };
+  }, [metrics, kpiDeltas]);
+
+  const alerts: AlertItem[] = useMemo(() => {
+    const items: AlertItem[] = [];
+    if (metrics.netResultCents < 0) {
+      items.push({
+        id: 'negative-result',
+        title: 'Resultado negativo',
+        message: `Resultado líquido de ${formatCurrency(metrics.netResultCents)} no período.`,
+        severity: 'danger',
+      });
+    }
+    if (metrics.variableExpensesTotalCents > metrics.totalValueCents * 0.3) {
+      items.push({
+        id: 'high-expenses',
+        title: 'Despesas elevadas',
+        message: 'Despesas variáveis acima de 30% do faturamento.',
+        severity: 'warning',
+      });
+    }
+    if (metrics.avgTicketCents < 5000 && metrics.totalQuantity > 0) {
+      items.push({
+        id: 'low-ticket',
+        title: 'Ticket médio baixo',
+        message: `Ticket médio de ${formatCurrency(metrics.avgTicketCents)} abaixo do esperado.`,
+        severity: 'warning',
+      });
+    }
+    return items;
+  }, [metrics]);
+
+  const isLoading =
+    cashBoxesQuery.isLoading || fixedExpensesQuery.isLoading || variableExpensesQuery.isLoading;
+
+  const hasAnyData =
+    metrics.services.length > 0 ||
+    metrics.variableExpensesTop.length > 0 ||
+    metrics.fixedExpensesTop.length > 0;
+
+  const hasMultiplePeriods = metrics.monthlyPerformance.length > 1;
+  const totalExpensesCents = metrics.variableExpensesTotalCents + metrics.fixedExpensesTotalCents;
+  const pdfDisabled = isLoading || !hasAnyData;
+  const temVariasLojas = metrics.storeRanking.length > 1;
+
+  const filteredVariableExpenses = useMemo(() => {
+    if (!expenseSearch.trim()) {
+      return metrics.variableExpensesTop;
+    }
+    return metrics.variableExpensesTop.filter((expense) =>
+      matchesSearchTerm(expenseSearch, expense.name, expense.storeName, expense.monthLabel),
+    );
+  }, [metrics.variableExpensesTop, expenseSearch]);
+
+  const filteredFixedExpenses = useMemo(() => {
+    if (!expenseSearch.trim()) {
+      return metrics.fixedExpensesTop;
+    }
+    return metrics.fixedExpensesTop.filter((expense) =>
+      matchesSearchTerm(expenseSearch, expense.name, expense.storeName, expense.monthLabel),
+    );
+  }, [metrics.fixedExpensesTop, expenseSearch]);
 
   return (
-    <div className="min-h-screen bg-background p-6">
-      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
-        <header className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+    <div className="flex h-screen overflow-hidden bg-[#f5f5f7]">
+      {/* Sidebar */}
+      <aside className="flex w-64 flex-col border-r border-slate-200 bg-white">
+        <div className="flex items-center gap-3 border-b border-slate-200 px-6 py-5">
+          <div className="rounded-xl bg-gradient-to-br from-cyan-50 to-blue-50 p-2 shadow-sm">
+            <img src="/logo.png" alt="TOP Vistorias" className="h-8 w-8 object-contain" />
+          </div>
           <div>
-            <h1 className="text-3xl font-bold text-slate-900">Administração</h1>
-            <p className="text-muted-foreground">
-              Visão consolidada das lojas e fechamentos. Período: {periodLabel}
-            </p>
+            <p className="text-sm font-semibold text-slate-900">TOP Vistorias</p>
+            <p className="text-xs text-slate-500">Administração</p>
           </div>
-          <div className="flex w-full items-center justify-between gap-3 md:w-auto md:justify-end">
-            <Button
-              type="button"
-              onClick={() => navigate('/admin/fechamento')}
-              variant="default"
-              size="sm"
-              className="gap-2"
-            >
-              <Calendar className="h-4 w-4" />
-              Fechamento mensal
-            </Button>
-            <Button
-              type="button"
-              onClick={() => navigate('/admin/metricas')}
-              variant="secondary"
-              size="sm"
-              className="gap-2"
-            >
-              <BarChart3 className="h-4 w-4" />
-              Métricas
-            </Button>
-            <div className="flex flex-col items-end text-right">
-              <span className="text-xs text-muted-foreground">Usuário</span>
-              <span className="max-w-[200px] truncate text-sm font-semibold text-slate-900 md:max-w-[240px]">
-                {userDisplayName}
-              </span>
-            </div>
-            <Button
-              onClick={() => void signOut()}
-              variant="outline"
-              size="sm"
-              className="gap-2"
-            >
-              <LogOut className="h-4 w-4" />
-              Sair
-            </Button>
-          </div>
-        </header>
+        </div>
 
+        <div className="border-b border-slate-200 px-6 py-4">
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Usuário</p>
+          <p className="mt-1 text-sm font-medium text-slate-900">{userDisplayName}</p>
+        </div>
+
+        <nav className="flex-1 space-y-1 px-3 py-4">
+          <button
+            onClick={() => navigate('/admin')}
+            className="flex w-full items-center gap-3 rounded-lg bg-slate-100 px-3 py-2.5 text-sm font-medium text-slate-900 transition-colors hover:bg-slate-200"
+          >
+            <BarChart3 className="h-5 w-5" />
+            Dashboard
+          </button>
+          <button
+            onClick={() => navigate('/admin/historico')}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
+          >
+            <BarChart3 className="h-5 w-5" />
+            Histórico
+          </button>
+          <button
+              onClick={() => navigate('/admin/fechamento')}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
+          >
+            <Calendar className="h-5 w-5" />
+            Fechamento Mensal
+          </button>
+          <button
+            onClick={() => navigate('/admin/receber')}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
+          >
+            <DollarSign className="h-5 w-5" />
+            A Receber
+          </button>
+        </nav>
+
+        <div className="border-t border-slate-200 p-3">
+          <button
+            onClick={signOut}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-red-600 transition-colors hover:bg-red-50"
+          >
+            <LogOut className="h-5 w-5" />
+            Sair
+          </button>
+        </div>
+      </aside>
+
+      {/* Main Content */}
+      <main className="flex-1 overflow-y-auto">
+        <div className="mx-auto max-w-7xl space-y-6 p-8">
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div>
+              <h1 className="text-3xl font-semibold text-slate-900">Dashboard Administrativo</h1>
+              <p className="mt-1 text-sm text-slate-600">
+                Métricas consolidadas por tipo de serviço. Período: {periodLabel}
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex gap-1 rounded-lg border border-slate-200 bg-white p-1">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handlePeriodPreset('hoje')}
+                  className="text-xs h-8"
+                >
+                  Hoje
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handlePeriodPreset('7dias')}
+                  className="text-xs h-8"
+                >
+                  7 dias
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handlePeriodPreset('30dias')}
+                  className="text-xs h-8"
+                >
+                  30 dias
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handlePeriodPreset('esteMes')}
+                  className="text-xs h-8"
+                >
+                  Este mês
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handlePeriodPreset('mesAnterior')}
+                  className="text-xs h-8"
+                >
+                  Mês anterior
+                </Button>
+              </div>
+              <Button
+                type="button"
+                onClick={handleExportPdf}
+                disabled={pdfDisabled}
+                variant="outline"
+                size="sm"
+                className="gap-2"
+              >
+                <Download className="h-4 w-4" />
+                Gerar PDF
+              </Button>
+            </div>
+          </div>
+
+        <div ref={exportRef} className="flex flex-col gap-6">
         <Card>
           <CardHeader>
-            <CardTitle>Filtros</CardTitle>
+              <CardTitle>Filtros do período</CardTitle>
           </CardHeader>
-          <CardContent className="grid gap-4 md:grid-cols-4">
+            <CardContent className="grid gap-4 md:grid-cols-5">
             <div className="space-y-1">
               <Label>Loja</Label>
               <Select
@@ -761,1083 +1144,607 @@ export default function AdminDashboard() {
                 }
               />
             </div>
-            <div className="md:col-span-4 flex flex-wrap items-center gap-3">
-              <Button onClick={handleSearch}>Buscar</Button>
-              <Button variant="outline" onClick={handleClearFilters}>Limpar</Button>
-              {!appliedFilters && (
-                <span className="text-sm text-muted-foreground">Defina os filtros e clique em Buscar.</span>
-              )}
+              <div className="flex items-end justify-end gap-2">
+                <Button type="button" variant="outline" onClick={handleResetFilters}>
+                  Limpar
+                </Button>
+                <Button type="button" onClick={handleApplyFilters}>
+                  Aplicar
+                </Button>
             </div>
           </CardContent>
         </Card>
 
-        <Accordion
-          type="single"
-          collapsible
-          className="overflow-hidden rounded-lg border bg-card text-card-foreground shadow-sm"
-        >
-          <AccordionItem value="receivables">
-            <AccordionTrigger className="px-6">
-              <div className="flex w-full items-center justify-between gap-3">
-                <div className="text-left">
-                  <p className="text-base font-semibold text-slate-900">Lista de A Receber</p>
-                  <p className="text-sm text-muted-foreground">
-                    {appliedFilters
-                      ? 'Clique para visualizar e buscar recebíveis pendentes.'
-                      : 'Defina os filtros acima e clique em Buscar para habilitar a lista.'}
-                  </p>
-                </div>
-                <div className="flex flex-col items-end gap-1 text-right">
-                  <Badge variant="outline">
-                    {appliedFilters ? `${filteredReceivables.length} pendentes` : 'Aguardando filtros'}
-                  </Badge>
-                  {appliedFilters && (
-                    <span className="text-xs text-muted-foreground">
-                      Total {formatCurrency(receivablesTotalCents)}
-                    </span>
-                  )}
-                </div>
-              </div>
-            </AccordionTrigger>
-            <AccordionContent className="px-6 pb-6">
-              {appliedFilters === null ? (
-                <div className="rounded-md border border-dashed bg-muted/40 px-6 py-8 text-center text-sm text-muted-foreground">
-                  Utilize os filtros acima e clique em{' '}
-                  <span className="font-medium text-slate-900">Buscar</span> para carregar os recebíveis.
-                </div>
-              ) : isReceivablesError ? (
-                <div className="rounded-md border border-destructive/20 bg-destructive/10 px-4 py-6 text-sm text-destructive">
-                  Não foi possível carregar a lista de recebíveis. Tente novamente em instantes.
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                    <div className="relative w-full md:w-80">
-                      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                      <Input
-                        value={receivablesSearch}
-                        onChange={(event) => setReceivablesSearch(event.target.value)}
-                        placeholder="Buscar por cliente, placa ou loja..."
-                        disabled={!appliedFilters || isLoadingReceivables}
-                        className="pl-9"
-                      />
-                    </div>
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <span>Somatório selecionado:</span>
-                      <span className="font-semibold text-slate-900">{formatCurrency(receivablesTotalCents)}</span>
-                    </div>
-                  </div>
-                  {isLoadingReceivables ? (
-                    <div className="flex items-center justify-center rounded-md border border-dashed py-10 text-sm text-muted-foreground">
+          {isLoading ? (
+            <div className="flex h-40 w-full items-center justify-center rounded-md border border-dashed text-sm text-muted-foreground">
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Carregando recebíveis...
+              Calculando métricas...
                     </div>
-                  ) : filteredReceivables.length === 0 ? (
-                    <div className="flex items-center justify-center rounded-md border border-dashed py-10 text-sm text-muted-foreground">
-                      Nenhum recebível encontrado para os filtros aplicados.
+          ) : !hasAnyData ? (
+            <div className="flex h-40 w-full items-center justify-center rounded-md border border-dashed text-sm text-muted-foreground">
+              Nenhum dado encontrado para o período selecionado.
                     </div>
                   ) : (
-                    <div className="max-h-96 overflow-auto rounded-md border">
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>Loja</TableHead>
-                            <TableHead>Cliente</TableHead>
-                            <TableHead>Status</TableHead>
-                            <TableHead>Valor</TableHead>
-                            <TableHead>Vencimento</TableHead>
-                            <TableHead>Atualização</TableHead>
-                            {canManageReceivables && <TableHead className="text-right">Ações</TableHead>}
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {filteredReceivables.map((receivable) => {
-                            const storeName = storeMap.get(receivable.store_id) ?? 'Loja';
-                            const statusInfo =
-                              RECEIVABLE_STATUS_STYLES[receivable.status] ?? RECEIVABLE_STATUS_STYLES.aberto;
-                            const payments = receivable.receivable_payments ?? [];
-                            const latestPayment = payments.reduce<
-                              ReceivableWithPayments['receivable_payments'][number] | null
-                            >((latest, current) => {
-                              if (!latest) {
-                                return current;
-                              }
-                              return current.paid_on > latest.paid_on ? current : latest;
-                            }, null);
+            <>
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                <KpiCard
+                  title="Total de serviços"
+                  value={metrics.totalQuantity.toLocaleString('pt-BR')}
+                  deltaPct={kpiDeltas.servicos_pct}
+                  helper="Quantidade total lançada"
+                />
+                <KpiCard
+                  title="Faturamento em serviços"
+                  value={metrics.totalValueCents / 100}
+                  deltaPct={kpiDeltas.faturamento_pct}
+                  sparkline={sparklines.faturamento7d.map((v) => v / 100)}
+                  helper="Inclui caixas diários e fechamentos"
+                />
+                <KpiCard
+                  title="Ticket médio"
+                  value={metrics.avgTicketCents / 100}
+                  deltaPct={kpiDeltas.ticketMedio_pct}
+                  sparkline={sparklines.ticket7d.map((v) => v / 100)}
+                  helper="Valor médio por serviço"
+                />
+                <KpiCard
+                  title="Serviço destaque"
+                  value={
+                    metrics.topByValue
+                      ? `${metrics.topByValue.code ?? metrics.topByValue.name}`
+                      : 'Sem dados'
+                  }
+                  helper={
+                    metrics.topByValue
+                      ? `${metrics.topByValue.quantity.toLocaleString('pt-BR')} un - ${formatCurrencyFromCents(metrics.topByValue.valueCents)}`
+                      : 'Não há serviços registrados'
+                  }
+                />
+              </div>
 
-                            return (
-                              <TableRow key={receivable.id}>
-                                <TableCell className="whitespace-nowrap text-sm font-medium text-slate-700">
-                                  {storeName}
-                                </TableCell>
-                                <TableCell>
-                                  <div className="text-sm font-semibold text-slate-900">
-                                    {receivable.customer_name}
-                                  </div>
-                                  <div className="mt-1 flex flex-wrap gap-x-3 text-xs text-muted-foreground">
-                                    {receivable.service_types?.name && (
-                                      <span>{receivable.service_types.name}</span>
-                                    )}
-                                    {receivable.plate && (
-                                      <span>Placa {receivable.plate.toUpperCase()}</span>
-                                    )}
-                                  </div>
-                                </TableCell>
-                                <TableCell>
-                                  <Badge variant="outline" className={statusInfo.badgeClass}>
-                                    {statusInfo.label}
-                                  </Badge>
-                                </TableCell>
-                                <TableCell>{formatCurrency(receivable.original_amount_cents ?? 0)}</TableCell>
-                                <TableCell>
-                                  {receivable.due_date ? formatDate(receivable.due_date) : '-'}
-                                </TableCell>
-                                <TableCell className="text-sm text-muted-foreground">
-                                  {latestPayment ? (
-                                    <span>
-                                      Pago em{' '}
-                                      <span className="font-medium text-slate-900">
-                                        {formatDate(latestPayment.paid_on)}
-                                      </span>
-                                    </span>
-                                  ) : (
-                                    <span>
-                                      Criado em{' '}
-                                      <span className="font-medium text-slate-900">
-                                        {formatDate(receivable.created_at)}
-                                      </span>
-                                    </span>
-                                  )}
-                                </TableCell>
-                                {canManageReceivables && (
-                                  <TableCell className="text-right">
-                                    <div className="flex flex-wrap items-center justify-end gap-2">
-                                      {receivable.status === 'aberto' && (
-                                        <Button
-                                          size="sm"
-                                          variant="secondary"
-                                          onClick={() =>
-                                            setReceivablePaymentDialog({
-                                              receivable,
-                                              amount_cents: receivable.original_amount_cents ?? 0,
-                                              method: 'pix',
-                                              paid_on: getTodayISO(),
-                                            })
-                                          }
-                                        >
-                                          <CheckCircle className="mr-1 h-4 w-4" />
-                                          Registrar pagamento
-                                        </Button>
-                                      )}
-                                      {receivable.status === 'pago_pendente_baixa' && (
-                                        <Button
-                                          size="sm"
-                                          variant="default"
-                                          onClick={() => setReceivableToConfirmBaixa(receivable)}
-                                        >
-                                          <BadgeCheck className="mr-1 h-4 w-4" />
-                                          Dar baixa
-                                        </Button>
-                                      )}
-                                    </div>
-                                  </TableCell>
-                                )}
-                              </TableRow>
-                            );
-                          })}
-                        </TableBody>
-                      </Table>
-                    </div>
-                  )}
-                </div>
-              )}
-            </AccordionContent>
-          </AccordionItem>
-        </Accordion>
-
-        {canManageReceivables && (
-          <>
-            <Dialog
-              open={receivablePaymentDialog !== null}
-              onOpenChange={(open) => {
-                if (!open && !isRegisteringPayment) {
-                  setReceivablePaymentDialog(null);
-                }
-              }}
-            >
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Registrar pagamento</DialogTitle>
-                  <DialogDescription>Informe os detalhes para marcar o recebível como pago.</DialogDescription>
-                </DialogHeader>
-                {receivablePaymentDialog && (
-                  <div className="space-y-4">
-                    <div className="space-y-2">
-                      <Label>Cliente</Label>
-                      <Input value={receivablePaymentDialog.receivable.customer_name} disabled />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Valor pago</Label>
-                      <MoneyInput
-                        value={receivablePaymentDialog.amount_cents}
-                        onChange={(value) =>
-                          setReceivablePaymentDialog((previous) =>
-                            previous ? { ...previous, amount_cents: value } : previous,
-                          )
-                        }
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Método</Label>
-                      <Select
-                        value={receivablePaymentDialog.method}
-                        onValueChange={(value: PaymentMethod) =>
-                          setReceivablePaymentDialog((previous) =>
-                            previous ? { ...previous, method: value } : previous,
-                          )
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Selecione o método" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="pix">PIX</SelectItem>
-                          <SelectItem value="cartao">Cartão</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Data do pagamento</Label>
-                      <Input
-                        type="date"
-                        value={receivablePaymentDialog.paid_on}
-                        onChange={(event) =>
-                          setReceivablePaymentDialog((previous) =>
-                            previous ? { ...previous, paid_on: event.target.value } : previous,
-                          )
-                        }
-                      />
-                    </div>
-                  </div>
-                )}
-                <DialogFooter>
-                  <Button
-                    variant="outline"
-                    onClick={() => setReceivablePaymentDialog(null)}
-                    disabled={isRegisteringPayment}
-                  >
-                    Cancelar
-                  </Button>
-                  <Button
-                    onClick={() => {
-                      if (!receivablePaymentDialog) return;
-                      registerReceivablePaymentMutation.mutate({
-                        receivable: receivablePaymentDialog.receivable,
-                        amount_cents: receivablePaymentDialog.amount_cents,
-                        method: receivablePaymentDialog.method,
-                        paid_on: receivablePaymentDialog.paid_on,
-                      });
-                    }}
-                    disabled={
-                      isRegisteringPayment ||
-                      !receivablePaymentDialog ||
-                      receivablePaymentDialog.amount_cents <= 0 ||
-                      !receivablePaymentDialog.paid_on
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                <div
+                  className="cursor-pointer transition-transform hover:scale-[1.02]"
+                  onClick={() => setDetailModal({ type: 'variable-expenses', open: true })}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      setDetailModal({ type: 'variable-expenses', open: true });
                     }
-                  >
-                    {isRegisteringPayment ? 'Registrando...' : 'Confirmar pagamento'}
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
+                  }}
+                  aria-label="Ver detalhes das despesas variáveis"
+                >
+                  <KpiCard
+                    title="Despesas variáveis"
+                    value={metrics.variableExpensesTotalCents / 100}
+                    deltaPct={kpiDeltas.variaveis_pct}
+                    helper={
+                      metrics.totalValueCents > 0
+                        ? `${((metrics.variableExpensesTotalCents / metrics.totalValueCents) * 100).toFixed(1)}% do faturamento • ${metrics.variableExpensesTop.reduce((acc, item) => acc + item.occurrences, 0)} lançamentos • Clique para detalhes`
+                        : `${metrics.variableExpensesTop.reduce((acc, item) => acc + item.occurrences, 0)} lançamentos no período • Clique para detalhes`
+                    }
+                  />
+                </div>
+                <div
+                  className="cursor-pointer transition-transform hover:scale-[1.02]"
+                  onClick={() => setDetailModal({ type: 'fixed-expenses', open: true })}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      setDetailModal({ type: 'fixed-expenses', open: true });
+                    }
+                  }}
+                  aria-label="Ver detalhes das despesas fixas"
+                >
+                  <KpiCard
+                    title="Despesas fixas"
+                    value={metrics.fixedExpensesTotalCents / 100}
+                    deltaPct={kpiDeltas.fixas_pct}
+                    helper={
+                      metrics.totalValueCents > 0
+                        ? `${((metrics.fixedExpensesTotalCents / metrics.totalValueCents) * 100).toFixed(1)}% do faturamento • Compromissos mensais • Clique para detalhes`
+                        : 'Compromissos mensais registrados • Clique para detalhes'
+                    }
+                  />
+                </div>
+                <div
+                  className="cursor-pointer transition-transform hover:scale-[1.02]"
+                  onClick={() => setDetailModal({ type: 'net-result', open: true })}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      setDetailModal({ type: 'net-result', open: true });
+                    }
+                  }}
+                  aria-label="Ver detalhes do resultado líquido"
+                >
+                  <KpiCard
+                    title="Resultado líquido"
+                    value={metrics.netResultCents / 100}
+                    deltaPct={kpiDeltas.resultado_pct}
+                    sparkline={sparklines.resultado7d.map((v) => v / 100)}
+                    negativeIsBad={true}
+                    helper={
+                      metrics.totalValueCents > 0
+                        ? `Margem: ${((metrics.netResultCents / metrics.totalValueCents) * 100).toFixed(1)}% • Serviços - Despesas • Clique para detalhes`
+                        : 'Serviços - despesas variáveis - fixas • Clique para detalhes'
+                    }
+                  />
+                </div>
+              </div>
 
-            <Dialog
-              open={receivableToConfirmBaixa !== null}
-              onOpenChange={(open) => {
-                if (!open && !isBaixandoRecebivel) {
-                  setReceivableToConfirmBaixa(null);
-                }
-              }}
-            >
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Confirmar baixa</DialogTitle>
-                  <DialogDescription>Dar baixa remove o recebível das listas ativas imediatamente.</DialogDescription>
-                </DialogHeader>
-                {receivableToConfirmBaixa && (
-                  <div className="space-y-2 text-sm">
-                    <p>
-                      Cliente:{' '}
-                      <span className="font-semibold text-slate-900">
-                        {receivableToConfirmBaixa.customer_name}
-                      </span>
-                    </p>
-                    <p>Valor: {formatCurrency(receivableToConfirmBaixa.original_amount_cents ?? 0)}</p>
-                    {receivableToConfirmBaixa.plate && <p>Placa: {receivableToConfirmBaixa.plate.toUpperCase()}</p>}
-                  </div>
+              <div className="grid gap-4 md:grid-cols-1 lg:grid-cols-2">
+                <InsightsIA data={insightsData} onVerDetalhe={() => {}} onCreateTarefa={() => {}} />
+                <AlertsList alerts={alerts} isLoading={isLoading} onClick={(alert) => console.log('Alert clicked:', alert)} />
+              </div>
+
+              <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+                <ChartPareto data={paretoData} title="Análise de Pareto - Margem" />
+                {waterfallData && (
+                  <ChartWaterfall loja={waterfallData.loja} etapas={waterfallData.etapas} />
                 )}
-                <DialogFooter>
-                  <Button
-                    variant="outline"
-                    onClick={() => setReceivableToConfirmBaixa(null)}
-                    disabled={isBaixandoRecebivel}
-                  >
-                    Cancelar
-                  </Button>
-                  <Button
-                    variant="destructive"
-                    onClick={() => {
-                      if (!receivableToConfirmBaixa) return;
-                      baixaReceivableMutation.mutate(receivableToConfirmBaixa.id);
-                    }}
-                    disabled={isBaixandoRecebivel || !receivableToConfirmBaixa}
-                  >
-                    {isBaixandoRecebivel ? 'Processando...' : 'Confirmar baixa'}
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
-          </>
-        )}
+                <ChartHeatmap data={heatmapData} title="Heatmap de Vistorias" />
+              </div>
 
-        {!appliedFilters ? (
-          <Card className="border-dashed">
-            <CardContent className="py-16 text-center text-muted-foreground">
-              Utilize os filtros acima e clique em <span className="font-semibold text-slate-700">Buscar</span> para carregar os dados.
-            </CardContent>
-          </Card>
-        ) : isLoading ? (
-          <div className="flex min-h-[200px] items-center justify-center">
-            <div className="flex items-center gap-3 text-muted-foreground">
-              <Loader2 className="h-5 w-5 animate-spin" />
-              <span>Carregando dados...</span>
-            </div>
-          </div>
-        ) : (
-          <Tabs value={tab} onValueChange={(value) => setTab(value as TabValue)}>
-            <TabsList>
-              <TabsTrigger value="overview">Visão Geral</TabsTrigger>
-              <TabsTrigger value="cash">Consulta de Caixas</TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="overview" className="space-y-6">
-              <section className="grid gap-4 md:grid-cols-3 xl:grid-cols-6">
-                <SummaryCard title="Bruto" value={overallTotals.gross} variant="success" />
-                <SummaryCard title="PIX" value={overallTotals.pix} />
-                <SummaryCard title="Cartão" value={overallTotals.cartao} />
-                <SummaryCard title="Despesas Variáveis" value={overallTotals.expensesVariable} variant="destructive" />
-                <SummaryCard title="Líquido" value={overallTotals.net} variant="primary" />
-                <SummaryCard title="Líquido após fixas" value={overallTotals.netAfterFixed} variant="accent" />
-              </section>
-
+              <div className="grid gap-4 lg:grid-cols-2">
               <Card>
-                <CardHeader className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                  <div>
-                    <CardTitle>Resumo mensal</CardTitle>
-                    <p className="text-sm text-muted-foreground">
-                      Consolidação dos caixas e despesas fixas no período selecionado.
-                    </p>
-                  </div>
+                  <CardHeader>
+                    <CardTitle>Ranking de serviços</CardTitle>
                 </CardHeader>
                 <CardContent className="overflow-x-auto">
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Mês</TableHead>
-                        <TableHead>Bruto</TableHead>
-                        <TableHead>PIX</TableHead>
-                        <TableHead>Cartão</TableHead>
-                        <TableHead>Despesas Variáveis</TableHead>
-                        <TableHead>Líquido</TableHead>
-                        <TableHead>Fixas</TableHead>
-                        <TableHead>Líquido após fixas</TableHead>
-                        <TableHead className="text-right">Detalhes</TableHead>
+                          <TableHead>Servico</TableHead>
+                          <TableHead className="text-right">Quantidade</TableHead>
+                          <TableHead className="text-right">Ticket medio</TableHead>
+                          <TableHead className="text-right">Total</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {monthlySummary.length === 0 ? (
-                        <TableRow>
-                          <TableCell colSpan={8} className="text-center text-muted-foreground py-6">
-                            Nenhum dado encontrado para o período selecionado.
+                        {metrics.services.slice(0, 15).map((service) => (
+                          <TableRow key={service.id}>
+                            <TableCell>
+                              <div className="flex flex-col">
+                                <span className="font-medium text-slate-900">
+                                  {service.code ?? service.name}
+                                </span>
+                                {service.code && service.code !== service.name ? (
+                                  <span className="text-xs text-muted-foreground">{service.name}</span>
+                                ) : null}
+                              </div>
                           </TableCell>
-                        </TableRow>
-                      ) : (
-                        monthlySummary.map((month) => {
-                          const isActive = activeMonth === month.monthKey;
-                          return (
-                            <TableRow key={month.monthKey} className={isActive ? 'bg-slate-100/70' : undefined}>
-                              <TableCell>{month.monthLabel}</TableCell>
-                              <TableCell>{formatCurrency(month.gross)}</TableCell>
-                              <TableCell>{formatCurrency(month.pix)}</TableCell>
-                              <TableCell>{formatCurrency(month.cartao)}</TableCell>
-                              <TableCell>{formatCurrency(month.expensesVariable)}</TableCell>
-                              <TableCell>{formatCurrency(month.net)}</TableCell>
-                              <TableCell>{formatCurrency(month.fixedExpenses)}</TableCell>
-                              <TableCell>{formatCurrency(month.netAfterFixed)}</TableCell>
                               <TableCell className="text-right">
-                                <Button
-                                  size="sm"
-                                  variant={isActive ? 'default' : 'outline'}
-                                  onClick={() => setActiveMonth(month.monthKey)}
-                                >
-                                  {isActive ? 'Selecionado' : 'Ver detalhes'}
-                                </Button>
+                              {service.quantity.toLocaleString('pt-BR')}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {formatCurrencyFromCents(service.avgValueCents)}
+                            </TableCell>
+                            <TableCell className="text-right font-semibold">
+                              {formatCurrencyFromCents(service.valueCents)}
                               </TableCell>
                             </TableRow>
-                          );
-                        })
-                      )}
+                        ))}
                     </TableBody>
                   </Table>
                 </CardContent>
               </Card>
 
-              <Card>
-                <CardHeader className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                  <div>
-                    <CardTitle>Despesas fixas mensais</CardTitle>
+              {temVariasLojas ? (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Performance por loja</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {metrics.storeRanking.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">
+                        Nenhuma loja com serviços no período.
+                      </p>
+                    ) : (
+                      <ul className="space-y-3">
+                        {metrics.storeRanking.slice(0, 10).map((store) => (
+                          <li
+                            key={store.storeId}
+                            className="flex items-center justify-between rounded-md border p-3"
+                          >
+                            <div>
+                              <p className="font-medium text-slate-900">{store.name}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {store.quantity.toLocaleString('pt-BR')} serviços
+                              </p>
+                            </div>
+                            <span className="font-semibold text-emerald-600">
+                              {formatCurrencyFromCents(store.valueCents)}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </CardContent>
+                </Card>
+              ) : (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Top serviços por margem</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {rankingMargem.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">
+                        Nenhum serviço registrado no período.
+                      </p>
+                    ) : (
+                      <ul className="space-y-3">
+                        {rankingMargem.map((item, idx) => (
+                          <li
+                            key={idx}
+                            className="flex items-center justify-between rounded-md border p-3"
+                          >
+                            <div>
+                              <p className="font-medium text-slate-900">{item.servico}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {formatPercent(item.margem_pct)} do faturamento
+                              </p>
+                            </div>
+                            <span className="font-semibold text-emerald-600">
+                              {formatCurrency(item.margem / 100)}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
+              </div>
+
+              <div className="flex flex-col gap-3 rounded-md border border-dashed p-4">
+                <div className="flex flex-col gap-1">
+                  <h2 className="text-lg font-semibold text-slate-900">Despesas por nome</h2>
                     <p className="text-sm text-muted-foreground">
-                      Edite ou inclua despesas fixas para cada mês. Os valores impactam o líquido após fixas.
+                    Filtre despesas fixas e variaveis digitando qualquer trecho do nome, loja ou período.
                     </p>
                   </div>
-                  <Button
-                    onClick={() => {
-                      setEditingExpense(null);
-                      setExpenseDialogOpen(true);
-                    }}
-                  >
-                    <Plus className="mr-2 h-4 w-4" />
-                    Nova despesa fixa
-                  </Button>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                    <div className="w-full md:w-auto">
-                      <Input
-                        value={fixedExpenseSearch}
-                        onChange={(event) => setFixedExpenseSearch(event.target.value)}
-                        placeholder="Buscar por nome, mês ou loja..."
-                        className="md:min-w-[260px]"
-                      />
-                    </div>
-                    <div className="flex flex-wrap items-center gap-3">
-                      <Select value={fixedViewMode} onValueChange={(value) => setFixedViewMode(value as ListMode)}>
-                        <SelectTrigger className="w-[160px]">
-                          <SelectValue placeholder="Exibição" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="top5">Top 5 maiores</SelectItem>
-                          <SelectItem value="top10">Top 10 maiores</SelectItem>
-                          <SelectItem value="highest">Todos (maior primeiro)</SelectItem>
-                          <SelectItem value="lowest">Todos (menor primeiro)</SelectItem>
-                          <SelectItem value="all">Todos (ordem atual)</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <p className="text-sm text-muted-foreground">
-                        {displayedFixedExpenses.length} de {fixedExpensesForMonth.length}{' '}
-                        {fixedExpensesForMonth.length === 1 ? 'despesa exibida' : 'despesas exibidas'}
-                      </p>
+                <div className="w-full md:w-80">
+                  <Label className="text-xs uppercase text-muted-foreground">Buscar despesas</Label>
+                    <Input
+                    value={expenseSearch}
+                    placeholder="Ex: desconto, aluguel..."
+                    onChange={(event) => setExpenseSearch(event.target.value)}
+                  />
                     </div>
                   </div>
-                  <div className="overflow-x-auto">
+
+              <div className="grid gap-4 lg:grid-cols-2">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Maiores despesas variaveis</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {filteredVariableExpenses.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">
+                        {expenseSearch.trim()
+                          ? 'Nenhuma despesa variavel encontrada para a pesquisa.'
+                          : 'Nenhuma despesa variavel registrada no período.'}
+                      </p>
+                    ) : (
+                      <ul className="space-y-3">
+                        {filteredVariableExpenses.slice(0, 8).map((expense) => (
+                          <li
+                            key={expense.id}
+                            className="flex items-center justify-between rounded-md border p-3"
+                          >
+                            <div>
+                              <p className="font-medium text-slate-900">{expense.name}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {expense.occurrences} lançamentos
+                                {expense.storeName ? ` - ${expense.storeName}` : ''}
+                                {expense.monthLabel ? ` - ${expense.monthLabel}` : ''}
+                              </p>
+                              </div>
+                            <span className="font-semibold text-rose-600">
+                              {formatCurrencyFromCents(expense.totalCents)}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                  <CardHeader>
+                    <CardTitle>Maiores despesas fixas</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {filteredFixedExpenses.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">
+                        {expenseSearch.trim()
+                          ? 'Nenhuma despesa fixa encontrada para a pesquisa.'
+                          : 'Nenhuma despesa fixa registrada no período.'}
+                      </p>
+                    ) : (
+                      <ul className="space-y-3">
+                        {filteredFixedExpenses.slice(0, 8).map((expense) => (
+                          <li
+                            key={expense.id}
+                            className="flex items-center justify-between rounded-md border p-3"
+                          >
+                            <div>
+                              <p className="font-medium text-slate-900">{expense.name}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {expense.occurrences} lançamentos
+                                {expense.storeName ? ` - ${expense.storeName}` : ''}
+                                {expense.monthLabel ? ` - ${expense.monthLabel}` : ''}
+                              </p>
+                            </div>
+                            <span className="font-semibold text-rose-600">
+                              {formatCurrencyFromCents(expense.totalCents)}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </CardContent>
+                </Card>
+                          </div>
+
+              <div className="grid gap-4 lg:grid-cols-2">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Insights por período</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {metrics.monthlyPerformance.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">Sem dados suficientes.</p>
+                    ) : (
+                      <div className="space-y-4">
+                        <div className="grid gap-4 md:grid-cols-2">
+                          {metrics.bestPeriod ? (
+                            <div className="rounded-md border p-3">
+                              <p className="text-xs uppercase text-muted-foreground">Melhor resultado</p>
+                              <p className="text-lg font-semibold text-emerald-600">
+                                {formatCurrencyFromCents(metrics.bestPeriod.netCents)}
+                              </p>
+                              <p className="text-sm text-muted-foreground">{metrics.bestPeriod.label}</p>
+                            </div>
+                          ) : null}
+                          {metrics.worstPeriod ? (
+                            <div className="rounded-md border p-3">
+                              <p className="text-xs uppercase text-muted-foreground">Pior resultado</p>
+                              <p className="text-lg font-semibold text-rose-600">
+                                {formatCurrencyFromCents(metrics.worstPeriod.netCents)}
+                              </p>
+                              <p className="text-sm text-muted-foreground">{metrics.worstPeriod.label}</p>
+                                    </div>
+                          ) : null}
+                              </div>
+
+                        {hasMultiplePeriods ? (
+                          <div className="grid gap-4 md:grid-cols-2">
+                            <div>
+                              <p className="mb-2 text-xs uppercase text-muted-foreground">Melhores meses</p>
+                              <ul className="space-y-2">
+                                {metrics.topPeriods.slice(0, 3).map((period) => (
+                                  <li key={`top-${period.monthKey}`} className="flex items-center justify-between text-sm">
+                                    <span>{period.label}</span>
+                                    <span className="font-semibold text-emerald-600">
+                                      {formatCurrencyFromCents(period.netCents)}
+                                    </span>
+                                  </li>
+                                ))}
+                              </ul>
+                                  </div>
+                            <div>
+                              <p className="mb-2 text-xs uppercase text-muted-foreground">Piores meses</p>
+                              <ul className="space-y-2">
+                                {metrics.bottomPeriods.slice(0, 3).map((period) => (
+                                  <li key={`bottom-${period.monthKey}`} className="flex items-center justify-between text-sm">
+                                    <span>{period.label}</span>
+                                    <span className="font-semibold text-rose-600">
+                                      {formatCurrencyFromCents(period.netCents)}
+                                    </span>
+                                  </li>
+                                ))}
+                              </ul>
+                              </div>
+                            </div>
+                        ) : null}
+                        </div>
+                  )}
+                </CardContent>
+              </Card>
+
+    <Card>
+                  <CardHeader>
+                    <CardTitle>Resumo financeiro</CardTitle>
+      </CardHeader>
+      <CardContent>
+                    <ul className="space-y-2 text-sm">
+                      <li className="flex items-center justify-between">
+                        <span>Total de serviços</span>
+                        <span className="font-semibold text-slate-900">
+                          {formatCurrencyFromCents(metrics.totalValueCents)}
+                        </span>
+                      </li>
+                      <li className="flex items-center justify-between">
+                        <span>Despesas totais</span>
+                        <span className="font-semibold text-rose-600">
+                          {formatCurrencyFromCents(totalExpensesCents)}
+                        </span>
+                      </li>
+                      <li className="flex items-center justify-between">
+                        <span>Resultado líquido</span>
+                        <span className={`font-semibold ${metrics.netResultCents >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                          {formatCurrencyFromCents(metrics.netResultCents)}
+                        </span>
+                      </li>
+                    </ul>
+      </CardContent>
+    </Card>
+              </div>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Performance mensal</CardTitle>
+                </CardHeader>
+                <CardContent className="overflow-x-auto">
+                  {metrics.monthlyPerformance.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">Sem dados de meses anteriores.</p>
+                  ) : (
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead>Mês</TableHead>
-                          <TableHead>Loja</TableHead>
-                          <TableHead>Nome</TableHead>
-                          <TableHead>Valor</TableHead>
-                          <TableHead className="text-right">Ações</TableHead>
+                          <TableHead>Periodo</TableHead>
+                          <TableHead className="text-right">Serviços</TableHead>
+                          <TableHead className="text-right">Variaveis</TableHead>
+                          <TableHead className="text-right">Fixas</TableHead>
+                          <TableHead className="text-right">Resultado</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {displayedFixedExpenses.length > 0 ? (
-                          displayedFixedExpenses.map((expense) => {
-                            const storeName = storeMap.get(expense.store_id) ?? 'Todas';
-                            return (
-                              <TableRow key={expense.id}>
-                                <TableCell>{formatDate(expense.month_year, 'MMMM/yyyy')}</TableCell>
-                                <TableCell>{storeName}</TableCell>
-                                <TableCell>{expense.title}</TableCell>
-                                <TableCell>{formatCurrency(expense.amount_cents)}</TableCell>
-                                <TableCell className="text-right space-x-2">
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => {
-                                      setEditingExpense(expense);
-                                      setExpenseDialogOpen(true);
-                                    }}
-                                  >
-                                    <Edit className="mr-1 h-4 w-4" />
-                                    Editar
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    className="text-destructive hover:text-destructive"
-                                    onClick={() => deleteExpenseMutation.mutate(expense.id)}
-                                  >
-                                    <Trash2 className="mr-1 h-4 w-4" />
-                                    Remover
-                                  </Button>
-                                </TableCell>
-                              </TableRow>
-                            );
-                          })
-                        ) : (
-                          <TableRow>
-                            <TableCell colSpan={5} className="py-6 text-center text-muted-foreground">
-                              Nenhuma despesa fixa encontrada para a busca atual.
+                        {metrics.monthlyPerformance.map((month) => (
+                          <TableRow key={month.monthKey}>
+                            <TableCell>{month.label}</TableCell>
+                            <TableCell className="text-right">
+                              {formatCurrencyFromCents(month.serviceCents)}
+                            </TableCell>
+                            <TableCell className="text-right text-rose-600">
+                              {formatCurrencyFromCents(month.variableCents)}
+                            </TableCell>
+                            <TableCell className="text-right text-rose-600">
+                              {formatCurrencyFromCents(month.fixedCents)}
+                            </TableCell>
+                            <TableCell className={`text-right font-semibold ${month.netCents >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                              {formatCurrencyFromCents(month.netCents)}
                             </TableCell>
                           </TableRow>
-                        )}
+                        ))}
                       </TableBody>
                     </Table>
-                  </div>
+                  )}
                 </CardContent>
               </Card>
-              <Card>
-                <CardHeader className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+            </>
+          )}
+          </div>
+          </div>
+      </main>
+
+      <DetailModal
+        open={detailModal.open && detailModal.type === 'variable-expenses'}
+        onOpenChange={(open) => setDetailModal({ type: 'variable-expenses', open })}
+        title="Detalhamento de Despesas Variáveis"
+        description={`Total: ${formatCurrency(metrics.variableExpensesTotalCents / 100)} • ${metrics.variableExpensesTop.reduce((acc, item) => acc + item.occurrences, 0)} lançamentos`}
+      >
+        <div className="space-y-3">
+          {metrics.variableExpensesTop.length === 0 ? (
+            <p className="text-sm text-slate-500">Nenhuma despesa variável registrada no período.</p>
+          ) : (
+            <div className="space-y-2">
+              {metrics.variableExpensesTop.map((expense) => (
+                <div key={expense.id} className="flex items-center justify-between rounded-md border p-3">
                   <div>
-                    <CardTitle>Despesas variáveis</CardTitle>
-                    <p className="text-sm text-muted-foreground">
-                      Consulte, edite ou cadastre despesas variáveis dentro dos caixas do período selecionado.
+                    <p className="font-medium text-slate-900">{expense.name}</p>
+                    <p className="text-xs text-slate-500">
+                      {expense.occurrences} lançamentos
+                      {expense.storeName ? ` • ${expense.storeName}` : ''}
+                      {expense.monthLabel ? ` • ${expense.monthLabel}` : ''}
                     </p>
                   </div>
-                  <Button
-                    onClick={() => handleOpenVariableDialog(null)}
-                    disabled={!cashBoxOptions.length}
-                  >
-                    <Plus className="mr-2 h-4 w-4" />
-                    Nova despesa variável
-                  </Button>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                    <Input
-                      value={variableExpenseSearch}
-                      onChange={(event) => setVariableExpenseSearch(event.target.value)}
-                      placeholder="Buscar por nome, loja, vistoriador ou data..."
-                      className="md:min-w-[260px]"
-                    />
-                    <div className="flex flex-wrap items-center gap-3">
-                      <Select value={variableViewMode} onValueChange={(value) => setVariableViewMode(value as ListMode)}>
-                        <SelectTrigger className="w-[160px]">
-                          <SelectValue placeholder="Exibição" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="top5">Top 5 maiores</SelectItem>
-                          <SelectItem value="top10">Top 10 maiores</SelectItem>
-                          <SelectItem value="highest">Todos (maior primeiro)</SelectItem>
-                          <SelectItem value="lowest">Todos (menor primeiro)</SelectItem>
-                          <SelectItem value="all">Todos (ordem atual)</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <p className="text-sm text-muted-foreground">
-                        {displayedVariableExpenses.length} de {variableExpensesForMonth.length}{' '}
-                        {variableExpensesForMonth.length === 1 ? 'despesa exibida' : 'despesas exibidas'}
-                      </p>
-                    </div>
-                  </div>
-                  {!activeMonth ? (
-                    <p className="py-6 text-center text-muted-foreground">
-                      Selecione um mês no resumo para visualizar as despesas variáveis.
-                    </p>
-                  ) : variableExpensesQuery.isLoading ? (
-                    <div className="flex min-h-[120px] items-center justify-center text-muted-foreground">
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Carregando despesas...
-                    </div>
-                  ) : variableExpensesForMonth.length > 0 ? (
-                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                      {displayedVariableExpenses.map((expense) => {
-                        const storeName = storeMap.get(expense.cash_box.store_id) ?? 'Loja';
-                        const vistoriadorName = expense.cash_box.vistoriador?.name ?? null;
-                        return (
-                          <div
-                            key={expense.id}
-                            className="space-y-3 rounded-lg border border-slate-200 bg-white/70 p-4 shadow-sm"
-                          >
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="space-y-1">
-                                <p className="text-xs uppercase text-muted-foreground">{storeName}</p>
-                                <p className="text-sm font-semibold text-slate-900">
-                                  {formatDate(expense.cash_box.date)} â€¢ {expense.cash_box.note ?? 'Sem descrição'}
-                                </p>
-                                {vistoriadorName && (
-                                  <p className="text-xs text-muted-foreground">Vistoriador: {vistoriadorName}</p>
-                                )}
-                              </div>
-                              <p className="text-sm font-semibold text-destructive">
-                                {formatCurrency(expense.amount_cents)}
-                              </p>
-                            </div>
-                            <div className="flex items-center justify-between gap-3">
-                              <p className="text-sm text-slate-700">{expense.title}</p>
-                              <div className="flex items-center gap-2">
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => handleOpenVariableDialog(expense)}
-                                >
-                                  <Edit className="mr-1 h-4 w-4" />
-                                  Editar
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  className="text-destructive hover:text-destructive"
-                                  onClick={() => deleteVariableExpenseMutation.mutate(expense.id)}
-                                >
-                                  <Trash2 className="mr-1 h-4 w-4" />
-                                  Remover
-                                </Button>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <p className="py-6 text-center text-muted-foreground">
-                      Nenhuma despesa variável encontrada para a busca atual.
-                    </p>
-                  )}
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            <TabsContent value="cash">
-              <Card>
-                <CardHeader className="space-y-4">
-                  <div className="flex flex-col gap-1">
-                    <CardTitle>Caixas filtrados</CardTitle>
-                    <p className="text-sm text-muted-foreground">
-                      Pesquise por loja, vistoriador, descrição, entradas ou despesas.
-                    </p>
-                  </div>
-                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                    <Input
-                      value={cashSearchTerm}
-                      onChange={(event) => setCashSearchTerm(event.target.value)}
-                      placeholder="Buscar por nome, descrição, serviço ou despesa..."
-                      className="md:min-w-[280px]"
-                    />
-                    <div className="flex flex-wrap items-center gap-4">
-                      <label className="flex items-center gap-2 text-sm text-muted-foreground">
-                        <Checkbox
-                          checked={showEntries}
-                          onCheckedChange={(checked) => setShowEntries(Boolean(checked))}
-                        />
-                        Mostrar entradas
-                      </label>
-                      <label className="flex items-center gap-2 text-sm text-muted-foreground">
-                        <Checkbox
-                          checked={showVariableExpenses}
-                          onCheckedChange={(checked) => setShowVariableExpenses(Boolean(checked))}
-                        />
-                        Mostrar despesas variáveis
-                      </label>
-                      <span className="text-sm text-muted-foreground">
-                        {filteredCashBoxes.length}{' '}
-                        {filteredCashBoxes.length === 1 ? 'caixa encontrado' : 'caixas encontrados'}
-                      </span>
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  {filteredCashBoxes.length > 0 ? (
-                    filteredCashBoxes.map(({ box, storeName, services, expenses }) => {
-                      const totals = summarizeCashBoxes([box], []);
-                      const summary = totals[0];
-
-                      return (
-                        <div
-                          key={box.id}
-                          className="rounded-lg border border-slate-200 p-4 shadow-sm"
-                        >
-                          <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                            <div>
-                              <p className="text-sm uppercase text-muted-foreground">{storeName}</p>
-                              <p className="text-lg font-semibold text-slate-900">
-                                {formatDate(box.date)} â€¢ {box.note ?? 'Sem descrição'}
-                              </p>
-                            </div>
-                            <div className="flex flex-wrap gap-3 text-sm">
-                              <span>Bruto {summary ? formatCurrencyFromCents(summary.gross) : '-'}</span>
-                              <span>PIX {summary ? formatCurrencyFromCents(summary.pix) : '-'}</span>
-                              <span>Cartão {summary ? formatCurrencyFromCents(summary.cartao) : '-'}</span>
-                              <span>Líquido {summary ? formatCurrencyFromCents(summary.net) : '-'}</span>
-                            </div>
-                          </div>
-
-                          {showEntries && services.length > 0 && (
-                            <div className="mt-4 space-y-3">
-                              <p className="text-sm font-semibold text-slate-800">Entradas</p>
-                              <div className="grid gap-2 md:grid-cols-2">
-                                {services.map((service) => {
-                                  const serviceName = service.service_types?.name ?? service.service_type_id;
-                                  const totalValue = service.unit_price_cents * service.quantity;
-                                  return (
-                                    <div
-                                      key={service.id}
-                                      className="rounded-lg border border-slate-200 bg-white/70 p-3 shadow-sm"
-                                    >
-                                      <p className="text-sm font-semibold text-slate-800">{serviceName}</p>
-                                      <p className="text-xs text-muted-foreground">
-                                        {service.quantity} × {formatCurrency(service.unit_price_cents)}
-                                      </p>
-                                      <p className="text-sm font-semibold text-slate-900 mt-1">
-                                        {formatCurrency(totalValue)}
-                                      </p>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          )}
-
-                          {showVariableExpenses && expenses.length > 0 && (
-                            <div className="mt-4 space-y-3">
-                              <p className="text-sm font-semibold text-slate-800">Despesas variáveis</p>
-                              <div className="grid gap-2 md:grid-cols-2">
-                                {expenses.map((expense) => (
-                                  <div
-                                    key={expense.id}
-                                    className="rounded-lg border border-slate-200 bg-white/70 p-3 shadow-sm"
-                                  >
-                                    <p className="text-sm font-semibold text-slate-800">{expense.title}</p>
-                                    <p className="text-sm text-destructive font-semibold">
-                                      {formatCurrency(expense.amount_cents)}
-                                    </p>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-
-                          {!showEntries && !showVariableExpenses && (
-                            <p className="mt-4 text-sm text-muted-foreground">
-                              Ative pelo menos uma das opções acima para visualizar detalhes deste caixa.
-                            </p>
-                          )}
-                        </div>
-                      );
-                    })
-                  ) : (
-                    <p className="py-8 text-center text-muted-foreground">
-                      Nenhum caixa encontrado para os filtros/termos atuais.
-                    </p>
-                  )}
-                </CardContent>
-              </Card>
-            </TabsContent>
-          </Tabs>
-        )}
-      </div>
-
-      <VariableExpenseDialog
-        open={isVariableDialogOpen}
-        onOpenChange={(open) => {
-          setVariableDialogOpen(open);
-          if (!open) {
-            setEditingVariableExpense(null);
-          }
-        }}
-        cashBoxes={cashBoxOptions}
-        expense={editingVariableExpense}
-        onSubmit={handleVariableSubmit}
-        isSaving={updateVariableExpenseMutation.isPending || createVariableExpenseMutation.isPending}
-      />
-
-      <ExpenseDialog
-        open={isExpenseDialogOpen}
-        onOpenChange={(open) => {
-          setExpenseDialogOpen(open);
-          if (!open) {
-            setEditingExpense(null);
-          }
-        }}
-        stores={stores}
-        defaultStoreId={filters.storeId ?? undefined}
-        onSubmit={(values) => {
-          const payload = {
-            id: editingExpense?.id,
-            store_id: values.storeId,
-            month_year: addDays(new Date(`${values.month}-01`), 0).toISOString(),
-            title: values.title,
-            amount_cents: values.amount,
-          };
-          upsertExpenseMutation.mutate(payload);
-        }}
-        expense={editingExpense}
-        isSaving={upsertExpenseMutation.isPending}
-      />
-    </div>
-  );
-}
-
-interface SummaryCardProps {
-  title: string;
-  value: number;
-  variant?: 'default' | 'success' | 'primary' | 'accent' | 'destructive';
-}
-
-function SummaryCard({ title, value, variant = 'default' }: SummaryCardProps) {
-  const valueFormatted = formatCurrency(value);
-
-  const variantClasses: Record<string, string> = {
-    default: 'text-slate-900',
-    success: 'text-emerald-600',
-    primary: 'text-primary',
-    accent: 'text-sky-600',
-    destructive: 'text-destructive',
-  };
-
-  return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-medium text-muted-foreground">{title}</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <p className={`text-2xl font-semibold ${variantClasses[variant]}`}>
-          {valueFormatted}
-        </p>
-      </CardContent>
-    </Card>
-  );
-}
-
-interface ExpenseDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  stores: Store[];
-  defaultStoreId?: string;
-  expense: FixedExpenseRecord | null;
-  onSubmit: (values: { title: string; amount: number; storeId: string; month: string }) => void;
-  isSaving: boolean;
-}
-
-function VariableExpenseDialog({
-  open,
-  onOpenChange,
-  cashBoxes,
-  expense,
-  onSubmit,
-  isSaving,
-}: VariableExpenseDialogProps) {
-  const form = useForm<VariableExpenseFormValues>({
-    defaultValues: {
-      cashBoxId: expense?.cash_box_id ?? '',
-      title: expense?.title ?? '',
-      amount: expense?.amount_cents ?? 0,
-    },
-  });
-
-  useEffect(() => {
-    form.reset({
-      cashBoxId: expense?.cash_box_id ?? '',
-      title: expense?.title ?? '',
-      amount: expense?.amount_cents ?? 0,
-    });
-  }, [expense, form]);
-
-  const handleSubmit: SubmitHandler<VariableExpenseFormValues> = (values) => {
-    if (!values.cashBoxId) {
-      toast.error('Selecione o caixa.');
-      return;
-    }
-    onSubmit(values);
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{expense ? 'Editar despesa variável' : 'Nova despesa variável'}</DialogTitle>
-          <DialogDescription>
-            Escolha o caixa, informe a descrição e o valor da despesa variável.
-          </DialogDescription>
-        </DialogHeader>
-        <form className="space-y-4" onSubmit={form.handleSubmit(handleSubmit)}>
-          <div className="space-y-2">
-            <Label>Caixa</Label>
-            <Select
-              value={form.watch('cashBoxId')}
-              onValueChange={(value) => form.setValue('cashBoxId', value)}
-              disabled={Boolean(expense)}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Selecione o caixa" />
-              </SelectTrigger>
-              <SelectContent>
-                {cashBoxes.map((option) => (
-                  <SelectItem key={option.id} value={option.id}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-2">
-            <Label>Descrição</Label>
-            <Input {...form.register('title')} placeholder="Despesa variável" />
-          </div>
-          <div className="space-y-2">
-            <Label>Valor</Label>
-            <Controller
-              control={form.control}
-              name="amount"
-              render={({ field }) => (
-                <MoneyInput
-                  value={field.value ?? 0}
-                  onChange={(value) => field.onChange(value)}
-                  className="w-full"
-                />
-              )}
-            />
-          </div>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              Cancelar
-            </Button>
-            <Button type="submit" disabled={isSaving || (!expense && cashBoxes.length === 0)}>
-              {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-              Salvar
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function ExpenseDialog({
-  open,
-  onOpenChange,
-  stores,
-  defaultStoreId,
-  expense,
-  onSubmit,
-  isSaving,
-}: ExpenseDialogProps) {
-  const form = useForm<ExpenseFormValues>({
-    defaultValues: {
-      title: expense?.title ?? '',
-      amount: expense?.amount_cents ?? 0,
-      storeId: expense?.store_id ?? defaultStoreId ?? '',
-      month: expense ? expense.month_year.slice(0, 7) : defaultMonth(),
-    },
-  });
-
-  useEffect(() => {
-    form.reset({
-      title: expense?.title ?? '',
-      amount: expense?.amount_cents ?? 0,
-      storeId: expense?.store_id ?? defaultStoreId ?? '',
-      month: expense ? expense.month_year.slice(0, 7) : defaultMonth(),
-    });
-  }, [expense, defaultStoreId, form]);
-
-  const handleSubmit: SubmitHandler<ExpenseFormValues> = (values) => {
-    if (!values.month || !values.storeId) {
-      toast.error('Informe a loja e o mês da despesa fixa.');
-      return;
-    }
-    onSubmit({
-      title: values.title,
-      amount: values.amount,
-      storeId: values.storeId,
-      month: values.month,
-    });
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{expense ? 'Editar despesa fixa' : 'Nova despesa fixa'}</DialogTitle>
-          <DialogDescription>
-            Informe o mês, a loja, o nome e o valor da despesa fixa.
-          </DialogDescription>
-        </DialogHeader>
-
-        <form
-          className="space-y-4"
-          onSubmit={form.handleSubmit(handleSubmit)}
-        >
-          <div className="grid gap-4 md:grid-cols-2">
-            <div className="space-y-2">
-              <Label>Loja</Label>
-              <Select
-                value={form.watch('storeId')}
-                onValueChange={(value) => form.setValue('storeId', value)}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Selecione a loja" />
-                </SelectTrigger>
-                <SelectContent>
-                  {stores.map((store) => (
-                    <SelectItem key={store.id} value={store.id}>
-                      {store.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                  <span className="font-semibold text-rose-600">
+                    {formatCurrencyFromCents(expense.totalCents)}
+                  </span>
+                </div>
+              ))}
             </div>
+          )}
+        </div>
+      </DetailModal>
+
+      <DetailModal
+        open={detailModal.open && detailModal.type === 'fixed-expenses'}
+        onOpenChange={(open) => setDetailModal({ type: 'fixed-expenses', open })}
+        title="Detalhamento de Despesas Fixas"
+        description={`Total: ${formatCurrency(metrics.fixedExpensesTotalCents / 100)} • Compromissos mensais`}
+      >
+        <div className="space-y-3">
+          {metrics.fixedExpensesTop.length === 0 ? (
+            <p className="text-sm text-slate-500">Nenhuma despesa fixa registrada no período.</p>
+          ) : (
             <div className="space-y-2">
-              <Label>Mês</Label>
-              <Input
-                type="month"
-                value={form.watch('month')}
-                onChange={(event) => form.setValue('month', event.target.value)}
-              />
+              {metrics.fixedExpensesTop.map((expense) => (
+                <div key={expense.id} className="flex items-center justify-between rounded-md border p-3">
+                  <div>
+                    <p className="font-medium text-slate-900">{expense.name}</p>
+                    <p className="text-xs text-slate-500">
+                      {expense.occurrences} lançamentos
+                      {expense.storeName ? ` • ${expense.storeName}` : ''}
+                      {expense.monthLabel ? ` • ${expense.monthLabel}` : ''}
+                    </p>
+                  </div>
+                  <span className="font-semibold text-rose-600">
+                    {formatCurrencyFromCents(expense.totalCents)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </DetailModal>
+
+      <DetailModal
+        open={detailModal.open && detailModal.type === 'net-result'}
+        onOpenChange={(open) => setDetailModal({ type: 'net-result', open })}
+        title="Detalhamento do Resultado Líquido"
+        description={`Margem: ${metrics.totalValueCents > 0 ? ((metrics.netResultCents / metrics.totalValueCents) * 100).toFixed(1) : '0.0'}%`}
+      >
+        <div className="space-y-4">
+          <div className="grid grid-cols-3 gap-4">
+            <div className="rounded-lg border p-4">
+              <p className="text-xs text-slate-500 mb-1">Faturamento</p>
+              <p className="text-lg font-semibold text-slate-900">
+                {formatCurrency(metrics.totalValueCents / 100)}
+              </p>
+            </div>
+            <div className="rounded-lg border p-4">
+              <p className="text-xs text-slate-500 mb-1">Despesas Totais</p>
+              <p className="text-lg font-semibold text-rose-600">
+                {formatCurrency((metrics.variableExpensesTotalCents + metrics.fixedExpensesTotalCents) / 100)}
+              </p>
+            </div>
+            <div className="rounded-lg border p-4">
+              <p className="text-xs text-slate-500 mb-1">Resultado Líquido</p>
+              <p className={`text-lg font-semibold ${metrics.netResultCents >= 0 ? 'text-green-600' : 'text-rose-600'}`}>
+                {formatCurrency(metrics.netResultCents / 100)}
+              </p>
             </div>
           </div>
-
-          <div className="space-y-2">
-            <Label>Nome da despesa</Label>
-            <Input {...form.register('title')} placeholder="Despesa" />
+          <div className="rounded-lg border p-4 bg-slate-50">
+            <p className="text-sm font-medium text-slate-900 mb-2">Composição</p>
+            <div className="space-y-1 text-sm">
+              <div className="flex justify-between">
+                <span className="text-slate-600">Despesas Variáveis:</span>
+                <span className="font-medium">{formatCurrency(metrics.variableExpensesTotalCents / 100)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-600">Despesas Fixas:</span>
+                <span className="font-medium">{formatCurrency(metrics.fixedExpensesTotalCents / 100)}</span>
+              </div>
+              <div className="flex justify-between pt-2 border-t border-slate-200">
+                <span className="text-slate-900 font-medium">Total de Despesas:</span>
+                <span className="font-semibold text-rose-600">
+                  {formatCurrency((metrics.variableExpensesTotalCents + metrics.fixedExpensesTotalCents) / 100)}
+                </span>
+              </div>
+            </div>
           </div>
-
-          <div className="space-y-2">
-            <Label>Valor</Label>
-            <Controller
-              control={form.control}
-              name="amount"
-              render={({ field }) => (
-                <MoneyInput
-                  value={field.value ?? 0}
-                  onChange={(value) => field.onChange(value)}
-                  className="w-full"
-                />
-              )}
-            />
+        </div>
+      </DetailModal>
           </div>
-
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              Cancelar
-            </Button>
-            <Button type="submit" disabled={isSaving}>
-              {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-              Salvar
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
   );
-}
+};
 
-function defaultMonth(): string {
-  const now = new Date();
-  const iso = formatISO(now, { representation: 'date' });
-  return iso.slice(0, 7);
-}
-
-
-
-
-
+export default AdminDashboard;

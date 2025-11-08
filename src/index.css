@@ -119,4 +119,10 @@ All colors MUST be HSL.
   body {
     @apply bg-background text-foreground;
   }
+
+  body.login-body {
+    background: radial-gradient(circle at top left, #0f9ed4 0%, #0b7da5 45%, #06678b 100%);
+    color: #0f172a;
+    min-height: 100vh;
+  }
 }
