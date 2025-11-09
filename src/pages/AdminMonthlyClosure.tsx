@@ -10,7 +10,9 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { MoneyInput } from '@/components/MoneyInput';
-import { Loader2, Plus, Trash2, ClipboardList, LogOut, Calendar, BarChart3, DollarSign, Pencil } from 'lucide-react';
+import { Loader2, Plus, Trash2, ClipboardList, LogOut, Calendar, BarChart3, DollarSign, Pencil, Menu } from 'lucide-react';
+import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
+import { useIsMobile } from '@/hooks/use-mobile';
 import { useAuth } from '@/hooks/useAuth';
 import { formatCurrency } from '@/lib/money';
 import { fetchStores, fetchMonthlyClosure, upsertMonthlyClosure, deleteMonthlyClosure } from '@/features/admin/api';
@@ -35,6 +37,8 @@ export default function AdminMonthlyClosure() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { user, signOut } = useAuth();
+  const isMobile = useIsMobile();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const [selectedStore, setSelectedStore] = useState<string | 'all'>('all');
   const [selectedMonth, setSelectedMonth] = useState<string>('');
@@ -253,78 +257,115 @@ export default function AdminMonthlyClosure() {
   const hasLoadedDefaultExpenses = !closureData?.cashBoxId && defaultExpensesCount > 0;
   const canDeleteClosure = Boolean(closureData?.cashBoxId);
 
+  const SidebarContent = () => (
+    <>
+      <div className="flex items-center gap-3 border-b border-slate-200 px-4 py-4 md:px-6 md:py-5">
+        <div className="rounded-xl bg-gradient-to-br from-cyan-50 to-blue-50 p-2 shadow-sm">
+          <img src="/logo.png" alt="TOP Vistorias" className="h-8 w-8 object-contain" />
+        </div>
+        <div>
+          <p className="text-sm font-semibold text-slate-900">TOP Vistorias</p>
+          <p className="text-xs text-slate-500">Administração</p>
+        </div>
+      </div>
+
+      <div className="border-b border-slate-200 px-4 py-3 md:px-6 md:py-4">
+        <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Usuário</p>
+        <p className="mt-1 text-sm font-medium text-slate-900">{user?.name || user?.email || 'Usuário'}</p>
+      </div>
+
+      <nav className="flex-1 space-y-1 px-2 py-4 md:px-3">
+        <button
+          onClick={() => {
+            navigate('/admin');
+            if (isMobile) setSidebarOpen(false);
+          }}
+          className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
+        >
+          <BarChart3 className="h-5 w-5" />
+          Dashboard
+        </button>
+        <button
+          onClick={() => {
+            navigate('/admin/historico');
+            if (isMobile) setSidebarOpen(false);
+          }}
+          className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
+        >
+          <BarChart3 className="h-5 w-5" />
+          Histórico
+        </button>
+        <button
+          onClick={() => {
+            navigate('/admin/fechamento');
+            if (isMobile) setSidebarOpen(false);
+          }}
+          className="flex w-full items-center gap-3 rounded-lg bg-slate-100 px-3 py-2.5 text-sm font-medium text-slate-900 transition-colors hover:bg-slate-200"
+        >
+          <Calendar className="h-5 w-5" />
+          Fechamento Mensal
+        </button>
+        <button
+          onClick={() => {
+            navigate('/admin/receber');
+            if (isMobile) setSidebarOpen(false);
+          }}
+          className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
+        >
+          <DollarSign className="h-5 w-5" />
+          A Receber
+        </button>
+      </nav>
+
+      <div className="border-t border-slate-200 p-2 md:p-3">
+        <button
+          onClick={signOut}
+          className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-red-600 transition-colors hover:bg-red-50"
+        >
+          <LogOut className="h-5 w-5" />
+          Sair
+        </button>
+      </div>
+    </>
+  );
+
   return (
     <div className="flex h-screen overflow-hidden bg-[#f5f5f7]">
-      {/* Sidebar */}
-      <aside className="flex w-64 flex-col border-r border-slate-200 bg-white">
-        <div className="flex items-center gap-3 border-b border-slate-200 px-6 py-5">
-          <div className="rounded-xl bg-gradient-to-br from-cyan-50 to-blue-50 p-2 shadow-sm">
-            <img src="/logo.png" alt="TOP Vistorias" className="h-8 w-8 object-contain" />
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-slate-900">TOP Vistorias</p>
-            <p className="text-xs text-slate-500">Fechamento</p>
-          </div>
-        </div>
-
-        <div className="border-b border-slate-200 px-6 py-4">
-          <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Usuário</p>
-          <p className="mt-1 text-sm font-medium text-slate-900">{user?.name || user?.email || 'Usuário'}</p>
-        </div>
-
-        <nav className="flex-1 space-y-1 px-3 py-4">
-          <button
-            onClick={() => navigate('/admin')}
-            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
-          >
-            <BarChart3 className="h-5 w-5" />
-            Dashboard
-          </button>
-          <button
-            onClick={() => navigate('/admin/historico')}
-            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
-          >
-            <BarChart3 className="h-5 w-5" />
-            Histórico
-          </button>
-          <button
-            onClick={() => navigate('/admin/fechamento')}
-            className="flex w-full items-center gap-3 rounded-lg bg-slate-100 px-3 py-2.5 text-sm font-medium text-slate-900 transition-colors hover:bg-slate-200"
-          >
-            <Calendar className="h-5 w-5" />
-            Fechamento Mensal
-          </button>
-          <button
-            onClick={() => navigate('/admin/receber')}
-            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
-          >
-            <DollarSign className="h-5 w-5" />
-            A Receber
-          </button>
-        </nav>
-
-        <div className="border-t border-slate-200 p-3">
-          <button
-            onClick={signOut}
-            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-red-600 transition-colors hover:bg-red-50"
-          >
-            <LogOut className="h-5 w-5" />
-            Sair
-          </button>
-        </div>
+      {/* Sidebar Desktop */}
+      <aside className="hidden md:flex w-64 flex-col border-r border-slate-200 bg-white">
+        <SidebarContent />
       </aside>
 
+      {/* Sidebar Mobile */}
+      <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
+        <SheetContent side="left" className="w-64 p-0">
+          <div className="flex h-full flex-col bg-white">
+            <SidebarContent />
+          </div>
+        </SheetContent>
+      </Sheet>
+
       {/* Main Content */}
-      <main className="flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-5xl space-y-6 p-8">
-          <div className="flex items-center justify-between">
+      <main className="flex-1 overflow-y-auto relative">
+        {/* Mobile Menu Button - Sticky */}
+        <div className="sticky top-0 z-50 md:hidden bg-[#f5f5f7] border-b border-slate-200 px-4 py-3">
+          <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
+            <SheetTrigger asChild>
+              <Button variant="outline" size="icon" className="h-9 w-9">
+                <Menu className="h-5 w-5" />
+              </Button>
+            </SheetTrigger>
+          </Sheet>
+        </div>
+        <div className="mx-auto max-w-5xl space-y-4 p-4 md:space-y-6 md:p-8">
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div>
-              <h1 className="text-3xl font-semibold text-slate-900">Fechamento Mensal</h1>
+              <h1 className="text-2xl md:text-3xl font-semibold text-slate-900">Fechamento Mensal</h1>
               <p className="mt-1 text-sm text-slate-600">
                 Lance quantidades dos serviços e despesas variáveis para meses anteriores sem fechar.
               </p>
             </div>
-            <div className="text-right">
+            <div className="text-left md:text-right">
               <span className="text-xs font-medium uppercase tracking-wide text-slate-400">Mês selecionado</span>
               <p className="mt-1 text-sm font-semibold text-slate-900">{monthLabel}</p>
             </div>
@@ -334,7 +375,7 @@ export default function AdminMonthlyClosure() {
           <CardHeader>
             <CardTitle>Configuração</CardTitle>
           </CardHeader>
-          <CardContent className="grid gap-4 md:grid-cols-3">
+          <CardContent className="grid gap-4 grid-cols-1 md:grid-cols-3">
             <div className="space-y-2">
               <Label>Loja</Label>
               <Select value={selectedStore} onValueChange={setSelectedStore} disabled={isLoadingStores}>
@@ -405,7 +446,7 @@ export default function AdminMonthlyClosure() {
                     Nenhum tipo de serviço cadastrado.
                   </div>
                 ) : (
-                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  <div className="grid gap-3 grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
                     {services.map((service) => {
                       const quantity = serviceQuantities[service.id] ?? 0;
                       const total = quantity * service.default_price_cents;
@@ -536,7 +577,7 @@ export default function AdminMonthlyClosure() {
                 <Button
                   type="button"
                   variant="outline"
-                  className="text-destructive hover:bg-destructive/10"
+                  className="text-destructive hover:bg-destructive/10 w-full md:w-auto"
                   onClick={() => setShowDeleteDialog(true)}
                   disabled={deleteClosureMutation.isPending || upsertClosure.isPending}
                 >
@@ -547,6 +588,7 @@ export default function AdminMonthlyClosure() {
                 type="button"
                 onClick={handleSave}
                 disabled={upsertClosure.isPending || isLoadingClosure || !services.length}
+                className="w-full md:w-auto"
               >
                 {upsertClosure.isPending ? 'Salvando...' : 'Salvar fechamento mensal'}
               </Button>

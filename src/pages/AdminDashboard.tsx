@@ -4,7 +4,9 @@ import { useQuery } from '@tanstack/react-query';
 import { subDays, formatISO, format, parseISO, differenceInDays, startOfMonth, endOfMonth, startOfDay, endOfDay } from 'date-fns';
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
-import { Download, Loader2, LogOut, Calendar, BarChart3, DollarSign } from 'lucide-react';
+import { Download, Loader2, LogOut, Calendar, BarChart3, DollarSign, Menu } from 'lucide-react';
+import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
+import { useIsMobile } from '@/hooks/use-mobile';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -204,6 +206,8 @@ function generateSparkline(data: CashBoxWithRelations[], days: number, getValue:
 const AdminDashboard = () => {
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
+  const isMobile = useIsMobile();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const userDisplayName = user?.name || user?.email || 'Usuário';
   const defaultRange = getDefaultDateRange();
 
@@ -751,18 +755,33 @@ const AdminDashboard = () => {
     return {
       faturamento7d: generateSparkline(boxes, 7, (box) => {
         const services = box.cash_box_services ?? [];
-        return services.reduce((sum, svc) => sum + (svc.total_cents ?? 0), 0);
+        return services.reduce((sum, svc) => {
+          // Verifica se o serviço conta no faturamento (counts_in_gross)
+          const countsInGross = svc.service_types?.counts_in_gross ?? true;
+          if (!countsInGross) return sum;
+          return sum + (svc.total_cents ?? (svc.unit_price_cents ?? 0) * (svc.quantity ?? 0));
+        }, 0);
       }),
       ticket7d: generateSparkline(boxes, 7, (box) => {
         const services = box.cash_box_services ?? [];
-        const total = services.reduce((sum, svc) => sum + (svc.total_cents ?? 0), 0);
+        const total = services.reduce((sum, svc) => {
+          // Verifica se o serviço conta no faturamento (counts_in_gross)
+          const countsInGross = svc.service_types?.counts_in_gross ?? true;
+          if (!countsInGross) return sum;
+          return sum + (svc.total_cents ?? (svc.unit_price_cents ?? 0) * (svc.quantity ?? 0));
+        }, 0);
         const qty = services.reduce((sum, svc) => sum + (svc.quantity ?? 0), 0);
         return qty > 0 ? Math.round(total / qty) : 0;
       }),
       resultado7d: generateSparkline(boxes, 7, (box) => {
         const services = box.cash_box_services ?? [];
         const expenses = box.cash_box_expenses ?? [];
-        const revenue = services.reduce((sum, svc) => sum + (svc.total_cents ?? 0), 0);
+        const revenue = services.reduce((sum, svc) => {
+          // Verifica se o serviço conta no faturamento (counts_in_gross)
+          const countsInGross = svc.service_types?.counts_in_gross ?? true;
+          if (!countsInGross) return sum;
+          return sum + (svc.total_cents ?? (svc.unit_price_cents ?? 0) * (svc.quantity ?? 0));
+        }, 0);
         const exp = expenses.reduce((sum, exp) => sum + (exp.amount_cents ?? 0), 0);
         return revenue - exp;
       }),
@@ -786,7 +805,12 @@ const AdminDashboard = () => {
       
       const dayRevenueCents = dayBoxes.reduce((sum, box) => {
         const services = box.cash_box_services ?? [];
-        return sum + services.reduce((s, svc) => s + (svc.total_cents ?? 0), 0);
+        return sum + services.reduce((s, svc) => {
+          // Verifica se o serviço conta no faturamento (counts_in_gross)
+          const countsInGross = svc.service_types?.counts_in_gross ?? true;
+          if (!countsInGross) return s;
+          return s + (svc.total_cents ?? (svc.unit_price_cents ?? 0) * (svc.quantity ?? 0));
+        }, 0);
       }, 0);
 
       const dayVariableCents = dayBoxes.reduce((sum, box) => {
@@ -1002,79 +1026,116 @@ const AdminDashboard = () => {
     );
   }, [metrics.fixedExpensesTop, expenseSearch]);
 
+  const SidebarContent = () => (
+    <>
+      <div className="flex items-center gap-3 border-b border-slate-200 px-4 py-4 md:px-6 md:py-5">
+        <div className="rounded-xl bg-gradient-to-br from-cyan-50 to-blue-50 p-2 shadow-sm">
+          <img src="/logo.png" alt="TOP Vistorias" className="h-8 w-8 object-contain" />
+        </div>
+        <div>
+          <p className="text-sm font-semibold text-slate-900">TOP Vistorias</p>
+          <p className="text-xs text-slate-500">Administração</p>
+        </div>
+      </div>
+
+      <div className="border-b border-slate-200 px-4 py-3 md:px-6 md:py-4">
+        <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Usuário</p>
+        <p className="mt-1 text-sm font-medium text-slate-900">{userDisplayName}</p>
+      </div>
+
+      <nav className="flex-1 space-y-1 px-2 py-4 md:px-3">
+        <button
+          onClick={() => {
+            navigate('/admin');
+            if (isMobile) setSidebarOpen(false);
+          }}
+          className="flex w-full items-center gap-3 rounded-lg bg-slate-100 px-3 py-2.5 text-sm font-medium text-slate-900 transition-colors hover:bg-slate-200"
+        >
+          <BarChart3 className="h-5 w-5" />
+          Dashboard
+        </button>
+        <button
+          onClick={() => {
+            navigate('/admin/historico');
+            if (isMobile) setSidebarOpen(false);
+          }}
+          className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
+        >
+          <BarChart3 className="h-5 w-5" />
+          Histórico
+        </button>
+        <button
+          onClick={() => {
+            navigate('/admin/fechamento');
+            if (isMobile) setSidebarOpen(false);
+          }}
+          className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
+        >
+          <Calendar className="h-5 w-5" />
+          Fechamento Mensal
+        </button>
+        <button
+          onClick={() => {
+            navigate('/admin/receber');
+            if (isMobile) setSidebarOpen(false);
+          }}
+          className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
+        >
+          <DollarSign className="h-5 w-5" />
+          A Receber
+        </button>
+      </nav>
+
+      <div className="border-t border-slate-200 p-2 md:p-3">
+        <button
+          onClick={signOut}
+          className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-red-600 transition-colors hover:bg-red-50"
+        >
+          <LogOut className="h-5 w-5" />
+          Sair
+        </button>
+      </div>
+    </>
+  );
+
   return (
     <div className="flex h-screen overflow-hidden bg-[#f5f5f7]">
-      {/* Sidebar */}
-      <aside className="flex w-64 flex-col border-r border-slate-200 bg-white">
-        <div className="flex items-center gap-3 border-b border-slate-200 px-6 py-5">
-          <div className="rounded-xl bg-gradient-to-br from-cyan-50 to-blue-50 p-2 shadow-sm">
-            <img src="/logo.png" alt="TOP Vistorias" className="h-8 w-8 object-contain" />
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-slate-900">TOP Vistorias</p>
-            <p className="text-xs text-slate-500">Administração</p>
-          </div>
-        </div>
-
-        <div className="border-b border-slate-200 px-6 py-4">
-          <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Usuário</p>
-          <p className="mt-1 text-sm font-medium text-slate-900">{userDisplayName}</p>
-        </div>
-
-        <nav className="flex-1 space-y-1 px-3 py-4">
-          <button
-            onClick={() => navigate('/admin')}
-            className="flex w-full items-center gap-3 rounded-lg bg-slate-100 px-3 py-2.5 text-sm font-medium text-slate-900 transition-colors hover:bg-slate-200"
-          >
-            <BarChart3 className="h-5 w-5" />
-            Dashboard
-          </button>
-          <button
-            onClick={() => navigate('/admin/historico')}
-            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
-          >
-            <BarChart3 className="h-5 w-5" />
-            Histórico
-          </button>
-          <button
-              onClick={() => navigate('/admin/fechamento')}
-            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
-          >
-            <Calendar className="h-5 w-5" />
-            Fechamento Mensal
-          </button>
-          <button
-            onClick={() => navigate('/admin/receber')}
-            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
-          >
-            <DollarSign className="h-5 w-5" />
-            A Receber
-          </button>
-        </nav>
-
-        <div className="border-t border-slate-200 p-3">
-          <button
-            onClick={signOut}
-            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-red-600 transition-colors hover:bg-red-50"
-          >
-            <LogOut className="h-5 w-5" />
-            Sair
-          </button>
-        </div>
+      {/* Sidebar Desktop */}
+      <aside className="hidden md:flex w-64 flex-col border-r border-slate-200 bg-white">
+        <SidebarContent />
       </aside>
 
+      {/* Sidebar Mobile */}
+      <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
+        <SheetContent side="left" className="w-64 p-0">
+          <div className="flex h-full flex-col bg-white">
+            <SidebarContent />
+          </div>
+        </SheetContent>
+      </Sheet>
+
       {/* Main Content */}
-      <main className="flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-7xl space-y-6 p-8">
+      <main className="flex-1 overflow-y-auto relative">
+        {/* Mobile Menu Button - Sticky */}
+        <div className="sticky top-0 z-50 md:hidden bg-[#f5f5f7] border-b border-slate-200 px-4 py-3">
+          <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
+            <SheetTrigger asChild>
+              <Button variant="outline" size="icon" className="h-9 w-9">
+                <Menu className="h-5 w-5" />
+              </Button>
+            </SheetTrigger>
+          </Sheet>
+        </div>
+        <div className="mx-auto max-w-7xl space-y-4 p-4 md:space-y-6 md:p-8">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div>
-              <h1 className="text-3xl font-semibold text-slate-900">Dashboard Administrativo</h1>
+              <h1 className="text-2xl md:text-3xl font-semibold text-slate-900">Dashboard Administrativo</h1>
               <p className="mt-1 text-sm text-slate-600">
                 Métricas consolidadas por tipo de serviço. Período: {periodLabel}
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <div className="flex gap-1 rounded-lg border border-slate-200 bg-white p-1">
+              <div className="flex flex-wrap gap-1 rounded-lg border border-slate-200 bg-white p-1">
                 <Button
                   type="button"
                   variant="ghost"
@@ -1140,7 +1201,7 @@ const AdminDashboard = () => {
           <CardHeader>
               <CardTitle>Filtros do período</CardTitle>
           </CardHeader>
-            <CardContent className="grid gap-4 md:grid-cols-5">
+            <CardContent className="grid gap-4 grid-cols-1 md:grid-cols-5">
             <div className="space-y-1">
               <Label>Loja</Label>
               <Select
@@ -1240,7 +1301,7 @@ const AdminDashboard = () => {
                     </div>
                   ) : (
             <>
-              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+              <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-4">
                 <KpiCard
                   title="Total de serviços"
                   value={metrics.totalQuantity.toLocaleString('pt-BR')}
@@ -1276,7 +1337,7 @@ const AdminDashboard = () => {
                 />
               </div>
 
-              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
                 <div
                   className="cursor-pointer transition-transform hover:scale-[1.02]"
                   onClick={() => setDetailModal({ type: 'variable-expenses', open: true })}
@@ -1350,12 +1411,12 @@ const AdminDashboard = () => {
                 </div>
               </div>
 
-              <div className="grid gap-4 md:grid-cols-1 lg:grid-cols-2">
+              <div className="grid gap-4 grid-cols-1 lg:grid-cols-2">
                 <InsightsIA data={insightsData} onVerDetalhe={() => {}} onCreateTarefa={() => {}} />
                 <AlertsList alerts={alerts} isLoading={isLoading} onClick={(alert) => console.log('Alert clicked:', alert)} />
               </div>
 
-              <div className="grid gap-4 lg:grid-cols-2">
+              <div className="grid gap-4 grid-cols-1 lg:grid-cols-2">
                 <DREVisual 
                   data={{
                     totalRevenueCents: metrics.totalValueCents,
@@ -1375,7 +1436,7 @@ const AdminDashboard = () => {
               </div>
 
               {marginChartData.length > 0 && (
-                <div className="grid gap-4 lg:grid-cols-2">
+                <div className="grid gap-4 grid-cols-1 lg:grid-cols-2">
                   <MarginBarChart 
                     data={marginChartData}
                     title="Margem em Reais por Dia"
@@ -1391,12 +1452,13 @@ const AdminDashboard = () => {
                 <ChartHeatmap data={heatmapData} title="Mapa de Calor: Volume de Vendas por Horário" />
               </div>
 
-              <div className="grid gap-4 lg:grid-cols-2">
+              <div className="grid gap-4 grid-cols-1 lg:grid-cols-2">
               <Card>
                   <CardHeader>
                     <CardTitle>Ranking de serviços</CardTitle>
                 </CardHeader>
-                <CardContent className="overflow-x-auto">
+                <CardContent>
+                  <div className="overflow-x-auto">
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -1432,6 +1494,7 @@ const AdminDashboard = () => {
                         ))}
                     </TableBody>
                   </Table>
+                  </div>
                 </CardContent>
               </Card>
 
@@ -1519,7 +1582,7 @@ const AdminDashboard = () => {
                     </div>
                   </div>
 
-              <div className="grid gap-4 lg:grid-cols-2">
+              <div className="grid gap-4 grid-cols-1 lg:grid-cols-2">
                 <Card>
                   <CardHeader>
                     <CardTitle>Maiores despesas variaveis</CardTitle>
@@ -1593,7 +1656,7 @@ const AdminDashboard = () => {
                 </Card>
                           </div>
 
-              <div className="grid gap-4 lg:grid-cols-2">
+              <div className="grid gap-4 grid-cols-1 lg:grid-cols-2">
                 <Card>
                   <CardHeader>
                     <CardTitle>Insights por período</CardTitle>
@@ -1603,7 +1666,7 @@ const AdminDashboard = () => {
                       <p className="text-sm text-muted-foreground">Sem dados suficientes.</p>
                     ) : (
                       <div className="space-y-4">
-                        <div className="grid gap-4 md:grid-cols-2">
+                        <div className="grid gap-4 grid-cols-1 md:grid-cols-2">
                           {metrics.bestPeriod ? (
                             <div className="rounded-md border p-3">
                               <p className="text-xs uppercase text-muted-foreground">Melhor resultado</p>
@@ -1625,7 +1688,7 @@ const AdminDashboard = () => {
                               </div>
 
                         {hasMultiplePeriods ? (
-                          <div className="grid gap-4 md:grid-cols-2">
+                          <div className="grid gap-4 grid-cols-1 md:grid-cols-2">
                             <div>
                               <p className="mb-2 text-xs uppercase text-muted-foreground">Melhores meses</p>
                               <ul className="space-y-2">
@@ -1692,7 +1755,8 @@ const AdminDashboard = () => {
                 <CardHeader>
                   <CardTitle>Performance mensal</CardTitle>
                 </CardHeader>
-                <CardContent className="overflow-x-auto">
+                <CardContent>
+                  <div className="overflow-x-auto">
                   {metrics.monthlyPerformance.length === 0 ? (
                     <p className="text-sm text-muted-foreground">Sem dados de meses anteriores.</p>
                   ) : (
@@ -1727,6 +1791,7 @@ const AdminDashboard = () => {
                       </TableBody>
                     </Table>
                   )}
+                  </div>
                 </CardContent>
               </Card>
             </>
@@ -1804,7 +1869,7 @@ const AdminDashboard = () => {
         description={`Margem: ${metrics.totalValueCents > 0 ? ((metrics.netResultCents / metrics.totalValueCents) * 100).toFixed(1) : '0.0'}%`}
       >
         <div className="space-y-4">
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="rounded-lg border p-4">
               <p className="text-xs text-slate-500 mb-1">Faturamento</p>
               <p className="text-lg font-semibold text-slate-900">

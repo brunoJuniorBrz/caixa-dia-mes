@@ -28,6 +28,8 @@ import { formatCurrency } from '@/lib/money';
 import { formatDate, getTodayISO } from '@/lib/date';
 import { MoneyInput } from '@/components/MoneyInput';
 import { toast } from 'sonner';
+import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
+import { useIsMobile } from '@/hooks/use-mobile';
 import {
   Plus,
   DollarSign,
@@ -36,6 +38,8 @@ import {
   CheckCircle,
   BadgeCheck,
   BarChart3,
+  Calendar,
+  Menu,
 } from 'lucide-react';
 import type { Receivable, ServiceType } from '@/types/database';
 
@@ -53,11 +57,13 @@ export default function Receber() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const isAdmin = user?.role === 'admin';
+  const isMobile = useIsMobile();
   
   const [receivableSearch, setReceivableSearch] = useState('');
   const deferredReceivableSearch = useDeferredValue(receivableSearch);
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const [editingReceivable, setEditingReceivable] = useState<ReceivableWithRelations | null>(null);
   const [editForm, setEditForm] = useState({
@@ -250,50 +256,78 @@ export default function Receber() {
     }
   };
 
-  return (
-    <>
-    <div className="flex h-screen overflow-hidden bg-[#f5f5f7]">
-      {/* Sidebar */}
-      <aside className="flex w-64 flex-col border-r border-slate-200 bg-white">
-        <div className="flex items-center gap-3 border-b border-slate-200 px-6 py-5">
+  const SidebarContent = () => {
+    const isAdminUser = isAdmin;
+    const historicoPath = isAdminUser ? '/admin/historico' : '/historico';
+    const dashboardPath = isAdminUser ? '/admin' : '/dashboard';
+    const receberPath = isAdminUser ? '/admin/receber' : '/receber';
+
+    return (
+      <>
+        <div className="flex items-center gap-3 border-b border-slate-200 px-4 py-4 md:px-6 md:py-5">
           <div className="rounded-xl bg-gradient-to-br from-cyan-50 to-blue-50 p-2 shadow-sm">
             <img src="/logo.png" alt="TOP Vistorias" className="h-8 w-8 object-contain" />
           </div>
           <div>
             <p className="text-sm font-semibold text-slate-900">TOP Vistorias</p>
-            <p className="text-xs text-slate-500">A Receber</p>
+            <p className="text-xs text-slate-500">{isAdminUser ? 'Administração' : 'A Receber'}</p>
           </div>
         </div>
 
-        <div className="border-b border-slate-200 px-6 py-4">
+        <div className="border-b border-slate-200 px-4 py-3 md:px-6 md:py-4">
           <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Usuário</p>
           <p className="mt-1 text-sm font-medium text-slate-900">{user?.name}</p>
         </div>
 
-        <nav className="flex-1 space-y-1 px-3 py-4">
+        <nav className="flex-1 space-y-1 px-2 py-4 md:px-3">
           <button
-            onClick={() => navigate('/dashboard')}
+            onClick={() => {
+              navigate(dashboardPath);
+              if (isMobile) setSidebarOpen(false);
+            }}
             className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
           >
             <BarChart3 className="h-5 w-5" />
-            Balanço
+            Dashboard
           </button>
           <button
-            onClick={() => navigate('/historico')}
+            onClick={() => {
+              navigate(historicoPath);
+              if (isMobile) setSidebarOpen(false);
+            }}
             className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
           >
             <BarChart3 className="h-5 w-5" />
             Histórico
           </button>
+          {isAdminUser ? (
+            <button
+              onClick={() => {
+                navigate('/admin/fechamento');
+                if (isMobile) setSidebarOpen(false);
+              }}
+              className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
+            >
+              <Calendar className="h-5 w-5" />
+              Fechamento Mensal
+            </button>
+          ) : (
+            <button
+              onClick={() => {
+                navigate('/caixas/novo');
+                if (isMobile) setSidebarOpen(false);
+              }}
+              className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
+            >
+              <Plus className="h-5 w-5" />
+              Novo Caixa
+            </button>
+          )}
           <button
-            onClick={() => navigate('/caixas/novo')}
-            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
-          >
-            <Plus className="h-5 w-5" />
-            Novo Caixa
-          </button>
-          <button
-            onClick={() => navigate('/receber')}
+            onClick={() => {
+              navigate(receberPath);
+              if (isMobile) setSidebarOpen(false);
+            }}
             className="flex w-full items-center gap-3 rounded-lg bg-slate-100 px-3 py-2.5 text-sm font-medium text-slate-900 transition-colors hover:bg-slate-200"
           >
             <DollarSign className="h-5 w-5" />
@@ -301,7 +335,7 @@ export default function Receber() {
           </button>
         </nav>
 
-        <div className="border-t border-slate-200 p-3">
+        <div className="border-t border-slate-200 p-2 md:p-3">
           <button
             onClick={signOut}
             className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-red-600 transition-colors hover:bg-red-50"
@@ -310,18 +344,47 @@ export default function Receber() {
             Sair
           </button>
         </div>
+      </>
+    );
+  };
+
+  return (
+    <>
+    <div className="flex h-screen overflow-hidden bg-[#f5f5f7]">
+      {/* Sidebar Desktop */}
+      <aside className="hidden md:flex w-64 flex-col border-r border-slate-200 bg-white">
+        <SidebarContent />
       </aside>
 
+      {/* Sidebar Mobile */}
+      <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
+        <SheetContent side="left" className="w-64 p-0">
+          <div className="flex h-full flex-col bg-white">
+            <SidebarContent />
+          </div>
+        </SheetContent>
+      </Sheet>
+
       {/* Main Content */}
-      <main className="flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-7xl space-y-6 p-8">
+      <main className="flex-1 overflow-y-auto relative">
+        {/* Mobile Menu Button - Sticky */}
+        <div className="sticky top-0 z-50 md:hidden bg-[#f5f5f7] border-b border-slate-200 px-4 py-3">
+          <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
+            <SheetTrigger asChild>
+              <Button variant="outline" size="icon" className="h-9 w-9">
+                <Menu className="h-5 w-5" />
+              </Button>
+            </SheetTrigger>
+          </Sheet>
+        </div>
+        <div className="mx-auto max-w-7xl space-y-4 p-4 md:space-y-6 md:p-8">
           <div>
-            <h1 className="text-3xl font-semibold text-slate-900">A Receber</h1>
+            <h1 className="text-2xl md:text-3xl font-semibold text-slate-900">A Receber</h1>
             <p className="mt-1 text-sm text-slate-600">Gerencie pagamentos pendentes e acompanhe recebíveis</p>
           </div>
 
           {/* Filters */}
-          <div className="rounded-2xl bg-white p-6 shadow-sm">
+          <div className="rounded-2xl bg-white p-4 md:p-6 shadow-sm">
             <div className="flex flex-col gap-4 md:flex-row md:items-end md:gap-4">
               <div className="flex-1">
                 <Label className="text-xs font-medium text-slate-600">Buscar por nome ou placa</Label>
@@ -365,12 +428,12 @@ export default function Receber() {
           </div>
 
           {/* Table */}
-          <div className="rounded-2xl bg-white p-6 shadow-sm">
-            <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-slate-900">
+          <div className="rounded-2xl bg-white p-4 md:p-6 shadow-sm">
+            <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+              <h2 className="text-base md:text-lg font-semibold text-slate-900">
                 {filteredReceivables.length} recebíve{filteredReceivables.length !== 1 ? 'is' : 'l'}
               </h2>
-              <Badge variant="outline" className="text-xs">
+              <Badge variant="outline" className="text-xs w-fit">
                 {activeReceivables.length} em aberto
               </Badge>
             </div>
@@ -387,7 +450,7 @@ export default function Receber() {
                 Nenhum recebível encontrado
               </div>
             ) : (
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto -mx-4 md:mx-0 px-4 md:px-0">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -426,7 +489,8 @@ export default function Receber() {
                               ? `${formatCurrency(latestPayment.amount_cents)} em ${formatDate(latestPayment.paid_on)}`
                               : '—'}
                           </TableCell>
-                          <TableCell className="space-x-1 text-right">
+                          <TableCell className="text-right">
+                            <div className="flex flex-wrap gap-1 justify-end">
                             <Button
                               size="sm"
                               variant="outline"
@@ -440,9 +504,10 @@ export default function Receber() {
                                   service_type_id: receivable.service_type_id ?? '',
                                 });
                               }}
+                              className="text-xs"
                             >
-                              <PenSquare className="mr-1 h-4 w-4" />
-                              Editar
+                              <PenSquare className="mr-1 h-3 w-3 md:h-4 md:w-4" />
+                              <span className="hidden sm:inline">Editar</span>
                             </Button>
                             {receivable.status === 'aberto' && (
                               <Button
@@ -456,9 +521,10 @@ export default function Receber() {
                                     paid_on: getTodayISO(),
                                   })
                                 }
+                                className="text-xs"
                               >
-                                <CheckCircle className="mr-1 h-4 w-4" />
-                                Marcar pago
+                                <CheckCircle className="mr-1 h-3 w-3 md:h-4 md:w-4" />
+                                <span className="hidden sm:inline">Marcar pago</span>
                               </Button>
                             )}
                             {isAdmin && receivable.status === 'pago_pendente_baixa' && (
@@ -466,11 +532,13 @@ export default function Receber() {
                                 size="sm"
                                 variant="default"
                                 onClick={() => setConfirmReceivable(receivable)}
+                                className="text-xs"
                               >
-                                <BadgeCheck className="mr-1 h-4 w-4" />
-                                Dar baixa
+                                <BadgeCheck className="mr-1 h-3 w-3 md:h-4 md:w-4" />
+                                <span className="hidden sm:inline">Dar baixa</span>
                               </Button>
                             )}
+                            </div>
                           </TableCell>
                         </TableRow>
                       );
@@ -503,7 +571,7 @@ export default function Receber() {
             <Label>Placa</Label>
             <Input value={editForm.plate} onChange={(event) => handleEditChange('plate', event.target.value)} />
           </div>
-          <div className="grid gap-4 md:grid-cols-2">
+          <div className="grid gap-4 grid-cols-1 md:grid-cols-2">
             <div className="space-y-2">
               <Label>Serviço relacionado</Label>
               <Select

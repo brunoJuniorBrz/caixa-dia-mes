@@ -1,5 +1,5 @@
 import { useDeferredValue, useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
@@ -16,6 +16,15 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { formatCurrency } from '@/lib/money';
 import { formatDate, getTodayISO } from '@/lib/date';
 import { toast } from 'sonner';
@@ -27,7 +36,10 @@ import {
   Trash2,
   BarChart3,
   FileDown,
+  Calendar,
+  Menu,
 } from 'lucide-react';
+import { useIsMobile } from '@/hooks/use-mobile';
 import type {
   CashBox,
   CashBoxService,
@@ -77,11 +89,13 @@ function computeBoxTotals(box: CashBoxWithRelations) {
   );
 
   const net = gross - expensesTotal;
+  const dinheiro = gross - pix - cartao; // Valor em dinheiro = bruto - PIX - Cartão
 
   return {
     gross,
     pix,
     cartao,
+    dinheiro,
     expenses: expensesTotal,
     net,
     returnCount,
@@ -91,14 +105,21 @@ function computeBoxTotals(box: CashBoxWithRelations) {
 export default function Historico() {
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
-  const [startDate, setStartDate] = useState(getTodayISO());
-  const [endDate, setEndDate] = useState(getTodayISO());
-  const [cashBoxSearch, setCashBoxSearch] = useState('');
+  const location = useLocation();
+  const isMobile = useIsMobile();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  
+  // Restaurar filtros do state da navegação ou usar valores padrão
+  const savedFilters = (location.state as { filters?: { startDate?: string; endDate?: string; search?: string } })?.filters;
+  const [startDate, setStartDate] = useState(savedFilters?.startDate || getTodayISO());
+  const [endDate, setEndDate] = useState(savedFilters?.endDate || getTodayISO());
+  const [cashBoxSearch, setCashBoxSearch] = useState(savedFilters?.search || '');
   const deferredCashSearch = useDeferredValue(cashBoxSearch);
   const queryClient = useQueryClient();
   const isDateRangeValid = useMemo(() => startDate <= endDate, [startDate, endDate]);
-  const [shouldFetch, setShouldFetch] = useState(false);
+  const [shouldFetch, setShouldFetch] = useState(savedFilters ? true : false);
   const [cashBoxToDelete, setCashBoxToDelete] = useState<CashBoxWithRelations | null>(null);
+  const [viewingCashBox, setViewingCashBox] = useState<CashBoxWithRelations | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 5;
 
@@ -139,6 +160,14 @@ export default function Historico() {
     },
     enabled: (isAdmin || !!user?.store_id) && isDateRangeValid && shouldFetch,
   });
+
+  // Executar busca automaticamente quando filtros são restaurados
+  useEffect(() => {
+    if (savedFilters) {
+      setShouldFetch(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const cashBoxes = isDateRangeValid ? cashBoxesData : [];
 
@@ -207,6 +236,53 @@ export default function Historico() {
       const serviceTypesMap = new Map(serviceTypes?.map(st => [st.id, st]) || []);
       
       const doc = new jsPDF('p', 'mm', 'a4');
+      
+      // Usar fonte padrão Helvetica (sempre disponível no jsPDF)
+      // Helper para definir fonte de forma consistente
+      const setFontSafe = (style: 'normal' | 'bold' | 'italic' = 'normal') => {
+        doc.setFont('helvetica', style);
+      };
+      
+      // Helper para quebrar texto em múltiplas linhas se necessário
+      const splitText = (text: string, maxWidth: number): string[] => {
+        if (!text) return [''];
+        const words = text.split(' ');
+        const lines: string[] = [];
+        let currentLine = '';
+        
+        for (const word of words) {
+          const testLine = currentLine ? `${currentLine} ${word}` : word;
+          const textWidth = doc.getTextWidth(testLine);
+          
+          if (textWidth > maxWidth && currentLine) {
+            lines.push(currentLine);
+            currentLine = word;
+          } else {
+            currentLine = testLine;
+          }
+        }
+        
+        if (currentLine) {
+          lines.push(currentLine);
+        }
+        
+        return lines.length > 0 ? lines : [text];
+      };
+      
+      // Helper para adicionar texto com quebra automática
+      const addTextWithWrap = (text: string, x: number, y: number, maxWidth: number, options?: { align?: 'left' | 'center' | 'right' }) => {
+        const lines = splitText(text, maxWidth);
+        let currentY = y;
+        lines.forEach((line) => {
+          doc.text(line, x, currentY, options || {});
+          currentY += 5; // Espaçamento entre linhas
+        });
+        return currentY;
+      };
+      
+      // Definir fonte padrão
+      setFontSafe('normal');
+      
       const totals = computeBoxTotals(box);
       
       // Configurações
@@ -221,11 +297,11 @@ export default function Historico() {
       
       doc.setTextColor(255, 255, 255);
       doc.setFontSize(28);
-      doc.setFont('helvetica', 'bold');
+      setFontSafe('bold');
       doc.text('TOP VISTORIAS', pageWidth / 2, 18, { align: 'center' });
       
       doc.setFontSize(12);
-      doc.setFont('helvetica', 'normal');
+      setFontSafe('normal');
       doc.text('Fechamento de Caixa Diário', pageWidth / 2, 27, { align: 'center' });
       
       const dataFormatada = new Date(box.date).toLocaleDateString('pt-BR', { 
@@ -241,20 +317,30 @@ export default function Historico() {
       
       // Adicionar nota/observação se existir
       if (box.note && box.note.trim()) {
+        const noteLines = splitText(box.note, contentWidth - 6);
+        const noteHeight = Math.max(12, noteLines.length * 5 + 4);
+        
         doc.setFillColor(241, 245, 249); // Cinza claro
-        doc.roundedRect(margin, y, contentWidth, 12, 2, 2, 'F');
+        doc.roundedRect(margin, y, contentWidth, noteHeight, 2, 2, 'F');
         doc.setDrawColor(148, 163, 184);
         doc.setLineWidth(0.3);
-        doc.roundedRect(margin, y, contentWidth, 12, 2, 2);
+        doc.roundedRect(margin, y, contentWidth, noteHeight, 2, 2);
         
         doc.setTextColor(71, 85, 105);
         doc.setFontSize(9);
-        doc.setFont('helvetica', 'bold');
-        doc.text('📝 Observação:', margin + 3, y + 5);
-        doc.setFont('helvetica', 'normal');
-        doc.text(box.note, margin + 3, y + 9);
-        y += 16;
+        setFontSafe('bold');
+        doc.text('Observação:', margin + 3, y + 5);
+        setFontSafe('normal');
+        let noteY = y + 9;
+        noteLines.forEach((line) => {
+          doc.text(line, margin + 3, noteY);
+          noteY += 5;
+        });
+        y = noteY + 4; // Espaçamento após observação
       }
+      
+      // Espaçamento entre seções (16px ≈ 5.6mm)
+      y += 5.6;
       
       // ===== TABELA DE ENTRADAS (SERVIÇOS) =====
       // Título da seção
@@ -262,28 +348,32 @@ export default function Historico() {
       doc.roundedRect(margin, y, contentWidth, 10, 2, 2, 'F');
       doc.setTextColor(255, 255, 255);
       doc.setFontSize(14);
-      doc.setFont('helvetica', 'bold');
-      doc.text('💰 ENTRADAS', margin + 3, y + 7);
+      setFontSafe('bold');
+      doc.text('ENTRADAS', margin + 3, y + 7);
       y += 12;
       
       // Header da tabela
       doc.setFillColor(220, 252, 231); // Verde claro
       doc.rect(margin, y, contentWidth, 9, 'F');
+      // Borda sutil apenas nas laterais (não corta texto)
       doc.setDrawColor(16, 185, 129);
-      doc.setLineWidth(0.5);
-      doc.rect(margin, y, contentWidth, 9);
+      doc.setLineWidth(0.25);
+      doc.line(margin, y, margin, y + 9); // Esquerda
+      doc.line(margin + contentWidth, y, margin + contentWidth, y + 9); // Direita
+      doc.line(margin, y, margin + contentWidth, y); // Topo
+      doc.line(margin, y + 9, margin + contentWidth, y + 9); // Base
       
       doc.setTextColor(21, 128, 61); // Verde escuro
       doc.setFontSize(10);
-      doc.setFont('helvetica', 'bold');
+      setFontSafe('bold');
       doc.text('Serviço', margin + 3, y + 6);
-      doc.text('Qtd', margin + 100, y + 6, { align: 'right' });
+      doc.text('Qtd', margin + 100, y + 6, { align: 'center' }); // Centralizado
       doc.text('Valor Unit.', margin + 130, y + 6, { align: 'right' });
       doc.text('Total', margin + contentWidth - 3, y + 6, { align: 'right' });
       y += 9;
       
       // Linhas de serviços
-      doc.setFont('helvetica', 'normal');
+      setFontSafe('normal');
       doc.setFontSize(9);
       doc.setTextColor(0, 0, 0);
       let totalEntradas = 0;
@@ -292,6 +382,7 @@ export default function Historico() {
       
       // Desenhar borda da tabela
       const startY = y;
+      const servicesRowHeight = 8; // 8px ≈ 2.8mm
       
       services.forEach((service, index) => {
         const serviceType = service.service_types || serviceTypesMap.get(service.service_type_id);
@@ -300,44 +391,56 @@ export default function Historico() {
           const valorTotal = (service.unit_price_cents * service.quantity) / 100;
           totalEntradas += valorTotal;
           
-          // Linha alternada
+          // Linha alternada (zebra)
           if (index % 2 === 0) {
             doc.setFillColor(249, 250, 251);
-            doc.rect(margin, y - 4, contentWidth, 6, 'F');
+            doc.rect(margin, y - 3, contentWidth, servicesRowHeight, 'F');
           }
           
-          doc.text(serviceType.name, margin + 3, y);
-          doc.text(service.quantity.toString(), margin + 100, y, { align: 'right' });
-          doc.text(`R$ ${valorUnitario.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, margin + 130, y, { align: 'right' });
-          doc.text(`R$ ${valorTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, margin + contentWidth - 3, y, { align: 'right' });
-          y += 6;
+          // Truncar nome do serviço se muito longo (máx 85mm)
+          const serviceName = serviceType.name.length > 30 
+            ? serviceType.name.substring(0, 27) + '...' 
+            : serviceType.name;
+          doc.text(serviceName, margin + 3, y + 2);
+          doc.text(service.quantity.toString(), margin + 100, y + 2, { align: 'center' }); // Centralizado
+          doc.text(`R$ ${valorUnitario.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, margin + 130, y + 2, { align: 'right' });
+          doc.text(`R$ ${valorTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, margin + contentWidth - 3, y + 2, { align: 'right' });
+          y += servicesRowHeight;
         }
       });
       
       if (services.length === 0) {
         doc.setTextColor(128, 128, 128);
-        doc.setFont('helvetica', 'italic');
-        doc.text('Nenhum serviço registrado', margin + 3, y);
-        y += 6;
+        setFontSafe('normal');
+        doc.text('Nenhum serviço registrado', margin + 3, y + 2);
+        y += servicesRowHeight;
         doc.setTextColor(0, 0, 0);
       }
       
-      // Borda da tabela
+      // Borda sutil da tabela (apenas laterais, não corta texto)
       doc.setDrawColor(16, 185, 129);
-      doc.setLineWidth(0.5);
-      doc.rect(margin, startY - 4, contentWidth, y - startY + 4);
+      doc.setLineWidth(0.25);
+      doc.line(margin, startY - 3, margin, y); // Esquerda
+      doc.line(margin + contentWidth, startY - 3, margin + contentWidth, y); // Direita
+      doc.line(margin, y, margin + contentWidth, y); // Base
       
-      // Total de entradas
-      y += 2;
-      doc.setFont('helvetica', 'bold');
-      doc.setFillColor(16, 185, 129);
-      doc.roundedRect(margin, y - 3, contentWidth, 9, 2, 2, 'F');
-      doc.setTextColor(255, 255, 255);
+      // Total de entradas (espaçamento superior de 6px ≈ 2.1mm)
+      y += 2.1;
+      setFontSafe('bold');
+      doc.setFillColor(247, 247, 247); // Fundo sutil para total
+      doc.roundedRect(margin, y, contentWidth, 9, 2, 2, 'F');
+      doc.setDrawColor(16, 185, 129);
+      doc.setLineWidth(0.25);
+      doc.roundedRect(margin, y, contentWidth, 9, 2, 2);
+      doc.setTextColor(0, 0, 0);
       doc.setFontSize(11);
-      doc.text('TOTAL ENTRADAS', margin + 3, y + 3);
+      doc.text('TOTAL ENTRADAS', margin + 3, y + 6);
       doc.setFontSize(12);
-      doc.text(`R$ ${totalEntradas.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, margin + contentWidth - 3, y + 3, { align: 'right' });
-      y += 14;
+      doc.text(`R$ ${totalEntradas.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, margin + contentWidth - 3, y + 6, { align: 'right' });
+      y += 13; // Espaçamento após total
+      
+      // Espaçamento entre seções (16px ≈ 5.6mm)
+      y += 5.6;
       
       // ===== TABELA DE SAÍDAS (DESPESAS) =====
       // Título da seção
@@ -345,26 +448,30 @@ export default function Historico() {
       doc.roundedRect(margin, y, contentWidth, 10, 2, 2, 'F');
       doc.setTextColor(255, 255, 255);
       doc.setFontSize(14);
-      doc.setFont('helvetica', 'bold');
-      doc.text('📤 SAÍDAS', margin + 3, y + 7);
+      setFontSafe('bold');
+      doc.text('SAÍDAS', margin + 3, y + 7);
       y += 12;
       
       // Header da tabela
       doc.setFillColor(254, 226, 226); // Vermelho claro
       doc.rect(margin, y, contentWidth, 9, 'F');
+      // Borda sutil apenas nas laterais
       doc.setDrawColor(220, 38, 38);
-      doc.setLineWidth(0.5);
-      doc.rect(margin, y, contentWidth, 9);
+      doc.setLineWidth(0.25);
+      doc.line(margin, y, margin, y + 9); // Esquerda
+      doc.line(margin + contentWidth, y, margin + contentWidth, y + 9); // Direita
+      doc.line(margin, y, margin + contentWidth, y); // Topo
+      doc.line(margin, y + 9, margin + contentWidth, y + 9); // Base
       
       doc.setTextColor(153, 27, 27); // Vermelho escuro
       doc.setFontSize(10);
-      doc.setFont('helvetica', 'bold');
+      setFontSafe('bold');
       doc.text('Descrição', margin + 3, y + 6);
       doc.text('Valor', margin + contentWidth - 3, y + 6, { align: 'right' });
       y += 9;
       
       // Linhas de despesas
-      doc.setFont('helvetica', 'normal');
+      setFontSafe('normal');
       doc.setFontSize(9);
       doc.setTextColor(0, 0, 0);
       let totalSaidas = 0;
@@ -372,46 +479,59 @@ export default function Historico() {
       const expenses = (box.cash_box_expenses || []).filter(e => e.title && e.amount_cents > 0);
       
       const startYExpenses = y;
+      const expensesRowHeight = 8; // 8px ≈ 2.8mm
       
       expenses.forEach((expense, index) => {
         const valor = expense.amount_cents / 100;
         totalSaidas += valor;
         
-        // Linha alternada
+        // Linha alternada (zebra)
         if (index % 2 === 0) {
           doc.setFillColor(249, 250, 251);
-          doc.rect(margin, y - 4, contentWidth, 6, 'F');
+          doc.rect(margin, y - 3, contentWidth, expensesRowHeight, 'F');
         }
         
-        doc.text(expense.title, margin + 3, y);
-        doc.text(`R$ ${valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, margin + contentWidth - 3, y, { align: 'right' });
-        y += 6;
+        // Truncar descrição se muito longa (máx 150mm)
+        const expenseTitle = expense.title.length > 50 
+          ? expense.title.substring(0, 47) + '...' 
+          : expense.title;
+        doc.text(expenseTitle, margin + 3, y + 2);
+        doc.text(`R$ ${valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, margin + contentWidth - 3, y + 2, { align: 'right' });
+        y += expensesRowHeight;
       });
       
       if (expenses.length === 0) {
         doc.setTextColor(128, 128, 128);
-        doc.setFont('helvetica', 'italic');
-        doc.text('Nenhuma despesa registrada', margin + 3, y);
-        y += 6;
+        setFontSafe('normal');
+        doc.text('Nenhuma despesa registrada', margin + 3, y + 2);
+        y += expensesRowHeight;
         doc.setTextColor(0, 0, 0);
       }
       
-      // Borda da tabela
+      // Borda sutil da tabela (apenas laterais)
       doc.setDrawColor(220, 38, 38);
-      doc.setLineWidth(0.5);
-      doc.rect(margin, startYExpenses - 4, contentWidth, y - startYExpenses + 4);
+      doc.setLineWidth(0.25);
+      doc.line(margin, startYExpenses - 3, margin, y); // Esquerda
+      doc.line(margin + contentWidth, startYExpenses - 3, margin + contentWidth, y); // Direita
+      doc.line(margin, y, margin + contentWidth, y); // Base
       
-      // Total de saídas
-      y += 2;
-      doc.setFont('helvetica', 'bold');
-      doc.setFillColor(220, 38, 38);
-      doc.roundedRect(margin, y - 3, contentWidth, 9, 2, 2, 'F');
-      doc.setTextColor(255, 255, 255);
+      // Total de saídas (espaçamento superior de 6px ≈ 2.1mm)
+      y += 2.1;
+      setFontSafe('bold');
+      doc.setFillColor(247, 247, 247); // Fundo sutil para total
+      doc.roundedRect(margin, y, contentWidth, 9, 2, 2, 'F');
+      doc.setDrawColor(220, 38, 38);
+      doc.setLineWidth(0.25);
+      doc.roundedRect(margin, y, contentWidth, 9, 2, 2);
+      doc.setTextColor(0, 0, 0);
       doc.setFontSize(11);
-      doc.text('TOTAL SAÍDAS', margin + 3, y + 3);
+      doc.text('TOTAL SAÍDAS', margin + 3, y + 6);
       doc.setFontSize(12);
-      doc.text(`R$ ${totalSaidas.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, margin + contentWidth - 3, y + 3, { align: 'right' });
-      y += 14;
+      doc.text(`R$ ${totalSaidas.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, margin + contentWidth - 3, y + 6, { align: 'right' });
+      y += 13; // Espaçamento após total
+      
+      // Espaçamento entre seções (16px ≈ 5.6mm)
+      y += 5.6;
       
       // ===== TABELA A RECEBER =====
       // Título da seção
@@ -419,44 +539,58 @@ export default function Historico() {
       doc.roundedRect(margin, y, contentWidth, 10, 2, 2, 'F');
       doc.setTextColor(255, 255, 255);
       doc.setFontSize(14);
-      doc.setFont('helvetica', 'bold');
-      doc.text('📋 A RECEBER', margin + 3, y + 7);
+      setFontSafe('bold');
+      doc.text('A RECEBER', margin + 3, y + 7);
       y += 12;
       
       // Buscar receivables do caixa
-      const { data: receivables } = await supabase
+      // @ts-expect-error - Type instantiation is excessively deep (known Supabase typing issue)
+      const { data: receivablesData } = await supabase
         .from('receivables')
-        .select('*')
+        .select('id, customer_name, original_amount_cents, service_type_id, due_date')
         .eq('cash_box_id', box.id);
       
-      const validReceivables = (receivables || []).filter(r => r.customer_name && r.amount_cents > 0);
+      const receivables = (receivablesData || []) as Array<{
+        id: string;
+        customer_name: string;
+        original_amount_cents: number;
+        service_type_id?: string | null;
+        due_date?: string | null;
+      }>;
+      
+      const validReceivables = receivables.filter(r => r.customer_name && r.original_amount_cents > 0);
       
       // Header da tabela
       doc.setFillColor(254, 243, 199); // Amarelo claro
       doc.rect(margin, y, contentWidth, 9, 'F');
+      // Borda sutil apenas nas laterais
       doc.setDrawColor(251, 191, 36);
-      doc.setLineWidth(0.5);
-      doc.rect(margin, y, contentWidth, 9);
+      doc.setLineWidth(0.25);
+      doc.line(margin, y, margin, y + 9); // Esquerda
+      doc.line(margin + contentWidth, y, margin + contentWidth, y + 9); // Direita
+      doc.line(margin, y, margin + contentWidth, y); // Topo
+      doc.line(margin, y + 9, margin + contentWidth, y + 9); // Base
       
       doc.setTextColor(146, 64, 14); // Amarelo escuro
       doc.setFontSize(10);
-      doc.setFont('helvetica', 'bold');
+      setFontSafe('bold');
       doc.text('Cliente', margin + 3, y + 6);
       doc.text('Serviço', margin + 70, y + 6);
-      doc.text('Vencimento', margin + 130, y + 6, { align: 'right' });
+      doc.text('Vencimento', margin + 130, y + 6, { align: 'center' }); // Centralizado
       doc.text('Valor', margin + contentWidth - 3, y + 6, { align: 'right' });
       y += 9;
       
       // Linhas de recebíveis
-      doc.setFont('helvetica', 'normal');
+      setFontSafe('normal');
       doc.setFontSize(9);
       doc.setTextColor(0, 0, 0);
       let totalReceber = 0;
       
       const startYReceivables = y;
+      const receivablesRowHeight = 8; // 8px ≈ 2.8mm
       
       validReceivables.forEach((receivable, index) => {
-        const valor = receivable.amount_cents / 100;
+        const valor = receivable.original_amount_cents / 100;
         totalReceber += valor;
         
         const serviceType = receivable.service_type_id 
@@ -466,62 +600,79 @@ export default function Historico() {
           ? new Date(receivable.due_date).toLocaleDateString('pt-BR')
           : '-';
         
-        // Linha alternada
+        // Linha alternada (zebra)
         if (index % 2 === 0) {
           doc.setFillColor(249, 250, 251);
-          doc.rect(margin, y - 4, contentWidth, 6, 'F');
+          doc.rect(margin, y - 3, contentWidth, receivablesRowHeight, 'F');
         }
         
-        doc.text(receivable.customer_name, margin + 3, y);
-        doc.text(serviceType?.name || '-', margin + 70, y);
-        doc.text(vencimento, margin + 130, y, { align: 'right' });
-        doc.text(`R$ ${valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, margin + contentWidth - 3, y, { align: 'right' });
-        y += 6;
+        // Truncar textos longos para não ultrapassar limites
+        const customerName = receivable.customer_name.length > 20 
+          ? receivable.customer_name.substring(0, 17) + '...' 
+          : receivable.customer_name;
+        const serviceName = serviceType?.name 
+          ? (serviceType.name.length > 15 ? serviceType.name.substring(0, 12) + '...' : serviceType.name)
+          : '-';
+        
+        doc.text(customerName, margin + 3, y + 2);
+        doc.text(serviceName, margin + 70, y + 2);
+        doc.text(vencimento, margin + 130, y + 2, { align: 'center' }); // Centralizado
+        doc.text(`R$ ${valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, margin + contentWidth - 3, y + 2, { align: 'right' });
+        y += receivablesRowHeight;
       });
       
       if (validReceivables.length === 0) {
         doc.setTextColor(128, 128, 128);
-        doc.setFont('helvetica', 'italic');
-        doc.text('Nenhum valor a receber', margin + 3, y);
-        y += 6;
+        setFontSafe('normal');
+        doc.text('Nenhum valor a receber', margin + 3, y + 2);
+        y += receivablesRowHeight;
         doc.setTextColor(0, 0, 0);
       }
       
-      // Borda da tabela
+      // Borda sutil da tabela (apenas laterais)
       doc.setDrawColor(251, 191, 36);
-      doc.setLineWidth(0.5);
-      doc.rect(margin, startYReceivables - 4, contentWidth, y - startYReceivables + 4);
+      doc.setLineWidth(0.25);
+      doc.line(margin, startYReceivables - 3, margin, y); // Esquerda
+      doc.line(margin + contentWidth, startYReceivables - 3, margin + contentWidth, y); // Direita
+      doc.line(margin, y, margin + contentWidth, y); // Base
       
-      // Total a receber
-      y += 2;
-      doc.setFont('helvetica', 'bold');
-      doc.setFillColor(251, 191, 36);
-      doc.roundedRect(margin, y - 3, contentWidth, 9, 2, 2, 'F');
-      doc.setTextColor(255, 255, 255);
+      // Total a receber (espaçamento superior de 6px ≈ 2.1mm)
+      y += 2.1;
+      setFontSafe('bold');
+      doc.setFillColor(247, 247, 247); // Fundo sutil para total
+      doc.roundedRect(margin, y, contentWidth, 9, 2, 2, 'F');
+      doc.setDrawColor(251, 191, 36);
+      doc.setLineWidth(0.25);
+      doc.roundedRect(margin, y, contentWidth, 9, 2, 2);
+      doc.setTextColor(0, 0, 0);
       doc.setFontSize(11);
-      doc.text('TOTAL A RECEBER', margin + 3, y + 3);
+      doc.text('TOTAL A RECEBER', margin + 3, y + 6);
       doc.setFontSize(12);
-      doc.text(`R$ ${totalReceber.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, margin + contentWidth - 3, y + 3, { align: 'right' });
-      y += 15;
+      doc.text(`R$ ${totalReceber.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, margin + contentWidth - 3, y + 6, { align: 'right' });
+      y += 13; // Espaçamento após total
+      
+      // Espaçamento entre seções (16px ≈ 5.6mm)
+      y += 5.6;
       
       // ===== BALANÇO FINAL =====
       // Box principal com gradiente simulado
       doc.setFillColor(59, 130, 246); // Azul
-      doc.roundedRect(margin, y, contentWidth, 45, 3, 3, 'F');
+      doc.roundedRect(margin, y, contentWidth, 54, 3, 3, 'F');
       
       // Borda decorativa
       doc.setDrawColor(37, 99, 235);
       doc.setLineWidth(1);
-      doc.roundedRect(margin, y, contentWidth, 45, 3, 3);
+      doc.roundedRect(margin, y, contentWidth, 54, 3, 3);
       
       doc.setTextColor(255, 255, 255);
       doc.setFontSize(18);
-      doc.setFont('helvetica', 'bold');
-      doc.text('💼 BALANÇO FINAL', pageWidth / 2, y + 10, { align: 'center' });
+      setFontSafe('bold');
+      doc.text('BALANÇO FINAL', pageWidth / 2, y + 10, { align: 'center' });
       
       const valorLiquido = totals.net / 100;
       const pixTotal = totals.pix / 100;
       const cartaoTotal = totals.cartao / 100;
+      const dinheiroTotal = totals.dinheiro / 100;
       
       // Linha separadora
       doc.setDrawColor(255, 255, 255);
@@ -530,52 +681,63 @@ export default function Historico() {
       
       // Valor Líquido em destaque
       doc.setFontSize(14);
-      doc.setFont('helvetica', 'normal');
+      setFontSafe('normal');
       doc.text('Valor Líquido:', pageWidth / 2 - 35, y + 22);
       doc.setFontSize(16);
-      doc.setFont('helvetica', 'bold');
+      setFontSafe('bold');
       doc.text(`R$ ${valorLiquido.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, pageWidth / 2 + 35, y + 22, { align: 'right' });
       
       // PIX e Cartão lado a lado
       doc.setFontSize(11);
-      doc.setFont('helvetica', 'normal');
+      setFontSafe('normal');
       const col1X = pageWidth / 2 - 40;
       const col2X = pageWidth / 2 + 5;
       
       doc.text('PIX:', col1X, y + 31);
-      doc.setFont('helvetica', 'bold');
+      setFontSafe('bold');
       doc.text(`R$ ${pixTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, col1X + 35, y + 31, { align: 'right' });
       
-      doc.setFont('helvetica', 'normal');
+      setFontSafe('normal');
       doc.text('Cartão:', col2X, y + 31);
-      doc.setFont('helvetica', 'bold');
+      setFontSafe('bold');
       doc.text(`R$ ${cartaoTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, col2X + 35, y + 31, { align: 'right' });
+      
+      // Dinheiro
+      doc.setFontSize(11);
+      setFontSafe('normal');
+      doc.text('Dinheiro:', pageWidth / 2 - 40, y + 40);
+      setFontSafe('bold');
+      doc.text(`R$ ${dinheiroTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, pageWidth / 2 + 5, y + 40, { align: 'right' });
       
       // Retornos centralizado
       doc.setFontSize(10);
-      doc.setFont('helvetica', 'normal');
-      doc.text(`Retornos: ${totals.returnCount}`, pageWidth / 2, y + 40, { align: 'center' });
+      setFontSafe('normal');
+      doc.text(`Retornos: ${totals.returnCount}`, pageWidth / 2, y + 49, { align: 'center' });
+      
+      // Verificar se precisa de nova página para o rodapé
+      const footerY = pageHeight - 15;
+      if (y + 20 > footerY) {
+        doc.addPage();
+        y = margin;
+      }
       
       // Footer com linha decorativa
-      const footerY = pageHeight - 15;
       doc.setDrawColor(200, 200, 200);
       doc.setLineWidth(0.3);
       doc.line(margin, footerY, pageWidth - margin, footerY);
       
       doc.setTextColor(100, 100, 100);
       doc.setFontSize(8);
-      doc.setFont('helvetica', 'normal');
+      setFontSafe('normal');
       doc.text('TOP VISTORIAS - Sistema de Gestão de Caixa', margin, pageHeight - 10);
       
-      doc.setFont('helvetica', 'italic');
-      const dataGeracao = new Date().toLocaleString('pt-BR', {
+      setFontSafe('normal');
+      const dataGeracao = new Date(box.date).toLocaleDateString('pt-BR', {
         day: '2-digit',
         month: '2-digit',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
+        year: 'numeric'
       });
-      doc.text(`Gerado em ${dataGeracao}`, pageWidth - margin, pageHeight - 10, { align: 'right' });
+      doc.text(`Data do caixa: ${dataGeracao}`, pageWidth - margin, pageHeight - 10, { align: 'right' });
       
       // Salvar PDF
       const nomeArquivo = `fechamento_${box.date.replace(/-/g, '')}.pdf`;
@@ -584,82 +746,143 @@ export default function Historico() {
       toast.success('PDF gerado com sucesso!');
     } catch (error) {
       console.error('Erro ao gerar PDF:', error);
-      toast.error('Erro ao gerar PDF. Tente novamente.');
+      const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido';
+      toast.error(`Erro ao gerar PDF: ${errorMessage}`);
     }
+  };
+
+  const SidebarContent = () => {
+    const isAdminUser = isAdmin;
+    const historicoPath = isAdminUser ? '/admin/historico' : '/historico';
+    const dashboardPath = isAdminUser ? '/admin' : '/dashboard';
+    const receberPath = isAdminUser ? '/admin/receber' : '/receber';
+
+    return (
+      <>
+        <div className="flex items-center gap-2 md:gap-3 border-b border-slate-200 px-2 py-3 md:px-4 md:py-4">
+          <div className="rounded-xl bg-gradient-to-br from-cyan-50 to-blue-50 p-1.5 md:p-2 shadow-sm shrink-0">
+            <img src="/logo.png" alt="TOP Vistorias" className="h-6 w-6 md:h-8 md:w-8 object-contain" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs md:text-sm font-semibold text-slate-900 truncate">TOP Vistorias</p>
+            <p className="text-[10px] md:text-xs text-slate-500 truncate">{isAdminUser ? 'Administração' : 'Histórico'}</p>
+          </div>
+        </div>
+
+        <div className="border-b border-slate-200 px-2 py-2 md:px-4 md:py-3">
+          <p className="text-[10px] md:text-xs font-medium uppercase tracking-wide text-slate-400">Usuário</p>
+          <p className="mt-1 text-xs md:text-sm font-medium text-slate-900 truncate">{user?.name}</p>
+        </div>
+
+        <nav className="flex-1 space-y-1 px-2 py-3 md:px-3 md:py-4">
+          <button
+            onClick={() => {
+              navigate(dashboardPath);
+              if (isMobile) setSidebarOpen(false);
+            }}
+            className="flex w-full items-center gap-2 md:gap-3 rounded-lg px-2 py-2 md:px-3 md:py-2.5 text-xs md:text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
+          >
+            <BarChart3 className="h-4 w-4 md:h-5 md:w-5 shrink-0" />
+            <span className="truncate min-w-0">Dashboard</span>
+          </button>
+          <button
+            onClick={() => {
+              navigate(historicoPath);
+              if (isMobile) setSidebarOpen(false);
+            }}
+            className="flex w-full items-center gap-2 md:gap-3 rounded-lg bg-slate-100 px-2 py-2 md:px-3 md:py-2.5 text-xs md:text-sm font-medium text-slate-900 transition-colors hover:bg-slate-200"
+          >
+            <BarChart3 className="h-4 w-4 md:h-5 md:w-5 shrink-0" />
+            <span className="truncate min-w-0">Histórico</span>
+          </button>
+          {isAdminUser ? (
+            <button
+              onClick={() => {
+                navigate('/admin/fechamento');
+                if (isMobile) setSidebarOpen(false);
+              }}
+              className="flex w-full items-center gap-2 md:gap-3 rounded-lg px-2 py-2 md:px-3 md:py-2.5 text-xs md:text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
+            >
+              <Calendar className="h-4 w-4 md:h-5 md:w-5 shrink-0" />
+              <span className="truncate min-w-0">Fechamento Mensal</span>
+            </button>
+          ) : (
+            <button
+              onClick={() => {
+                navigate('/caixas/novo');
+                if (isMobile) setSidebarOpen(false);
+              }}
+              className="flex w-full items-center gap-2 md:gap-3 rounded-lg px-2 py-2 md:px-3 md:py-2.5 text-xs md:text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
+            >
+              <Plus className="h-4 w-4 md:h-5 md:w-5 shrink-0" />
+              <span className="truncate min-w-0">Novo Caixa</span>
+            </button>
+          )}
+          <button
+            onClick={() => {
+              navigate(receberPath);
+              if (isMobile) setSidebarOpen(false);
+            }}
+            className="flex w-full items-center gap-2 md:gap-3 rounded-lg px-2 py-2 md:px-3 md:py-2.5 text-xs md:text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
+          >
+            <DollarSign className="h-4 w-4 md:h-5 md:w-5 shrink-0" />
+            <span className="truncate min-w-0">A Receber</span>
+          </button>
+        </nav>
+
+        <div className="border-t border-slate-200 p-2 md:p-3">
+          <button
+            onClick={() => {
+              signOut();
+              if (isMobile) setSidebarOpen(false);
+            }}
+            className="flex w-full items-center gap-2 md:gap-3 rounded-lg px-2 py-2 md:px-3 md:py-2.5 text-xs md:text-sm font-medium text-red-600 transition-colors hover:bg-red-50"
+          >
+            <LogOut className="h-4 w-4 md:h-5 md:w-5 shrink-0" />
+            <span className="truncate min-w-0">Sair</span>
+          </button>
+        </div>
+      </>
+    );
   };
 
   return (
     <>
     <div className="flex h-screen overflow-hidden bg-[#f5f5f7]">
-      {/* Sidebar */}
-      <aside className="flex w-64 flex-col border-r border-slate-200 bg-white">
-        <div className="flex items-center gap-3 border-b border-slate-200 px-6 py-5">
-          <div className="rounded-xl bg-gradient-to-br from-cyan-50 to-blue-50 p-2 shadow-sm">
-            <img src="/logo.png" alt="TOP Vistorias" className="h-8 w-8 object-contain" />
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-slate-900">TOP Vistorias</p>
-            <p className="text-xs text-slate-500">Histórico</p>
-          </div>
-        </div>
-
-        <div className="border-b border-slate-200 px-6 py-4">
-          <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Usuário</p>
-          <p className="mt-1 text-sm font-medium text-slate-900">{user?.name}</p>
-        </div>
-
-        <nav className="flex-1 space-y-1 px-3 py-4">
-          <button
-            onClick={() => navigate('/dashboard')}
-            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
-          >
-            <BarChart3 className="h-5 w-5" />
-            Balanço
-          </button>
-          <button
-            onClick={() => navigate('/historico')}
-            className="flex w-full items-center gap-3 rounded-lg bg-slate-100 px-3 py-2.5 text-sm font-medium text-slate-900 transition-colors hover:bg-slate-200"
-          >
-            <BarChart3 className="h-5 w-5" />
-            Histórico
-          </button>
-          <button
-            onClick={() => navigate('/caixas/novo')}
-            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
-          >
-            <Plus className="h-5 w-5" />
-            Novo Caixa
-          </button>
-          <button
-            onClick={() => navigate('/receber')}
-            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
-          >
-            <DollarSign className="h-5 w-5" />
-            A Receber
-          </button>
-        </nav>
-
-        <div className="border-t border-slate-200 p-3">
-          <button
-            onClick={signOut}
-            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-red-600 transition-colors hover:bg-red-50"
-          >
-            <LogOut className="h-5 w-5" />
-            Sair
-          </button>
-        </div>
+      {/* Sidebar Desktop */}
+      <aside className="hidden md:flex w-64 flex-col border-r border-slate-200 bg-white">
+        <SidebarContent />
       </aside>
 
+      {/* Sidebar Mobile */}
+      <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
+        <SheetContent side="left" className="w-64 p-0">
+          <div className="flex h-full flex-col bg-white">
+            <SidebarContent />
+          </div>
+        </SheetContent>
+      </Sheet>
+
       {/* Main Content */}
-      <main className="flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-7xl space-y-6 p-8">
+      <main className="flex-1 overflow-y-auto relative">
+        {/* Mobile Menu Button - Sticky */}
+        <div className="sticky top-0 z-50 md:hidden bg-[#f5f5f7] border-b border-slate-200 px-4 py-3">
+          <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
+            <SheetTrigger asChild>
+              <Button variant="outline" size="icon" className="h-9 w-9">
+                <Menu className="h-5 w-5" />
+              </Button>
+            </SheetTrigger>
+          </Sheet>
+        </div>
+        <div className="mx-auto max-w-7xl space-y-4 p-4 md:space-y-6 md:p-8">
           <div>
-            <h1 className="text-3xl font-semibold text-slate-900">Histórico de Caixas</h1>
+            <h1 className="text-2xl md:text-3xl font-semibold text-slate-900">Histórico de Caixas</h1>
             <p className="mt-1 text-sm text-slate-600">Pesquise e visualize caixas fechados por período</p>
           </div>
 
           {/* Date Selector */}
-          <div className="rounded-2xl bg-white p-6 shadow-sm">
+          <div className="rounded-2xl bg-white p-4 md:p-6 shadow-sm">
             <div className="flex flex-col gap-4 md:flex-row md:items-end md:gap-4">
               <div className="flex flex-col gap-2">
                 <Label className="text-xs font-medium text-slate-600">Data inicial</Label>
@@ -724,9 +947,9 @@ export default function Historico() {
           </div>
 
           {/* Search and Results */}
-          <div className="rounded-2xl bg-white p-6 shadow-sm">
+          <div className="rounded-2xl bg-white p-4 md:p-6 shadow-sm">
             <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-              <h2 className="text-lg font-semibold text-slate-900">
+              <h2 className="text-base md:text-lg font-semibold text-slate-900">
                 {filteredCashBoxes.length} caixa{filteredCashBoxes.length !== 1 ? 's' : ''} encontrado{filteredCashBoxes.length !== 1 ? 's' : ''}
               </h2>
               <Input
@@ -734,7 +957,7 @@ export default function Historico() {
                 onChange={(event) => setCashBoxSearch(event.target.value)}
                 placeholder="Buscar por nota, serviço ou despesa..."
                 aria-label="Buscar caixas"
-                className="h-10 rounded-lg border-slate-200 md:w-80"
+                className="h-10 rounded-lg border-slate-200 w-full md:w-80"
               />
             </div>
 
@@ -760,10 +983,10 @@ export default function Historico() {
                       <div
                         key={box.id}
                         className="group cursor-pointer rounded-xl border border-slate-200 p-5 transition-all hover:border-slate-300 hover:shadow-md"
-                        onClick={() => navigate(`/caixas/${box.id}`)}
+                        onClick={() => setViewingCashBox(box)}
                       >
                         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                          <div className="space-y-2">
+                          <div className="space-y-2 flex-1">
                             <p className="text-base font-semibold text-slate-900">{formatDate(box.date)}</p>
                             {box.note && (
                               <p className="text-sm text-slate-600">{box.note}</p>
@@ -773,7 +996,7 @@ export default function Historico() {
                               despesas · {totals.returnCount} retornos
                             </p>
                           </div>
-                          <div className="flex flex-wrap gap-4 text-xs">
+                          <div className="flex flex-wrap gap-3 md:gap-4 text-xs">
                             <div>
                               <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Bruto</p>
                               <p className="mt-1 text-sm font-semibold text-emerald-600">{formatCurrency(totals.gross)}</p>
@@ -789,6 +1012,10 @@ export default function Historico() {
                             <div>
                               <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Cartão</p>
                               <p className="mt-1 text-sm font-semibold text-slate-900">{formatCurrency(totals.cartao)}</p>
+                            </div>
+                            <div>
+                              <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Dinheiro</p>
+                              <p className="mt-1 text-sm font-semibold text-green-600">{formatCurrency(totals.dinheiro)}</p>
                             </div>
                             <div>
                               <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Despesas</p>
@@ -816,7 +1043,16 @@ export default function Historico() {
                             variant="outline"
                             onClick={(event) => {
                               event.stopPropagation();
-                              navigate(`/caixas/${box.id}`);
+                              navigate(`/caixas/${box.id}`, {
+                                state: {
+                                  returnTo: isAdmin ? '/admin/historico' : '/historico',
+                                  filters: {
+                                    startDate,
+                                    endDate,
+                                    search: cashBoxSearch,
+                                  }
+                                }
+                              });
                             }}
                             className="h-8 rounded-lg text-xs"
                           >
@@ -883,6 +1119,130 @@ export default function Historico() {
       </main>
     </div>
 
+    <Dialog open={viewingCashBox !== null} onOpenChange={(open) => !open && setViewingCashBox(null)}>
+      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Detalhes do Caixa</DialogTitle>
+          <DialogDescription>
+            {viewingCashBox && `Caixa de ${formatDate(viewingCashBox.date)}`}
+          </DialogDescription>
+        </DialogHeader>
+        {viewingCashBox && (
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="rounded-lg border border-slate-200 p-4">
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Bruto</p>
+                <p className="mt-1 text-lg font-semibold text-emerald-600">
+                  {formatCurrency(computeBoxTotals(viewingCashBox).gross)}
+                </p>
+              </div>
+              <div className="rounded-lg border border-slate-200 p-4">
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Líquido</p>
+                <p className="mt-1 text-lg font-semibold text-cyan-600">
+                  {formatCurrency(computeBoxTotals(viewingCashBox).net)}
+                </p>
+              </div>
+              <div className="rounded-lg border border-slate-200 p-4">
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Despesas</p>
+                <p className="mt-1 text-lg font-semibold text-red-600">
+                  {formatCurrency(computeBoxTotals(viewingCashBox).expenses)}
+                </p>
+              </div>
+            </div>
+
+            {viewingCashBox.note && (
+              <div>
+                <p className="text-sm font-medium text-slate-700 mb-2">Observação</p>
+                <p className="text-sm text-slate-600">{viewingCashBox.note}</p>
+              </div>
+            )}
+
+            {viewingCashBox.cash_box_services && viewingCashBox.cash_box_services.length > 0 && (
+              <div>
+                <p className="text-sm font-medium text-slate-700 mb-3">Serviços ({viewingCashBox.cash_box_services.length})</p>
+                <div className="space-y-2">
+                  {viewingCashBox.cash_box_services.map((service) => (
+                    <div key={service.id} className="flex items-center justify-between rounded-lg border border-slate-200 p-3">
+                      <div>
+                        <p className="text-sm font-medium text-slate-900">
+                          {service.service_types?.name || 'Serviço'}
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          Quantidade: {service.quantity ?? 0} · Valor: {formatCurrency(service.unit_price_cents ?? 0)}
+                        </p>
+                      </div>
+                      <p className="text-sm font-semibold text-slate-900">
+                        {formatCurrency(service.total_cents ?? ((service.unit_price_cents ?? 0) * (service.quantity ?? 0)))}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {viewingCashBox.cash_box_expenses && viewingCashBox.cash_box_expenses.length > 0 && (
+              <div>
+                <p className="text-sm font-medium text-slate-700 mb-3">Despesas ({viewingCashBox.cash_box_expenses.length})</p>
+                <div className="space-y-2">
+                  {viewingCashBox.cash_box_expenses.map((expense) => (
+                    <div key={expense.id} className="flex items-center justify-between rounded-lg border border-slate-200 p-3">
+                      <div>
+                        <p className="text-sm font-medium text-slate-900">{expense.title}</p>
+                      </div>
+                      <p className="text-sm font-semibold text-red-600">
+                        {formatCurrency(expense.amount_cents ?? 0)}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="rounded-lg border border-slate-200 p-4">
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">PIX</p>
+                <p className="mt-1 text-base font-semibold text-slate-900">
+                  {formatCurrency(computeBoxTotals(viewingCashBox).pix)}
+                </p>
+              </div>
+              <div className="rounded-lg border border-slate-200 p-4">
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Cartão</p>
+                <p className="mt-1 text-base font-semibold text-slate-900">
+                  {formatCurrency(computeBoxTotals(viewingCashBox).cartao)}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setViewingCashBox(null)}>
+            Fechar
+          </Button>
+          {viewingCashBox && (
+            <Button onClick={(e) => {
+              e.preventDefault();
+              const cashBoxId = viewingCashBox.id;
+              setViewingCashBox(null);
+              setTimeout(() => {
+                navigate(`/caixas/${cashBoxId}`, {
+                  state: {
+                    returnTo: isAdmin ? '/admin/historico' : '/historico',
+                    filters: {
+                      startDate,
+                      endDate,
+                      search: cashBoxSearch,
+                    }
+                  }
+                });
+              }, 100);
+            }}>
+              Editar
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
     <AlertDialog
       open={cashBoxToDelete !== null}
       onOpenChange={(open) => {
@@ -920,4 +1280,5 @@ export default function Historico() {
     </>
   );
 }
+
 

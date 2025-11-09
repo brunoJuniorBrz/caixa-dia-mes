@@ -52,6 +52,12 @@ import type { ServiceType } from '@/types/database';
 interface CashBoxFormProps {
   mode: 'create' | 'edit';
   cashBoxId?: string;
+  returnTo?: string;
+  returnFilters?: {
+    startDate?: string;
+    endDate?: string;
+    search?: string;
+  };
 }
 
 const EMPTY_TOTALS: CashBoxTotals = {
@@ -66,7 +72,7 @@ const EMPTY_TOTALS: CashBoxTotals = {
   returnQuantity: 0,
 };
 
-export function CashBoxForm({ mode, cashBoxId }: CashBoxFormProps) {
+export function CashBoxForm({ mode, cashBoxId, returnTo, returnFilters }: CashBoxFormProps) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { user } = useAuth();
@@ -205,13 +211,18 @@ export function CashBoxForm({ mode, cashBoxId }: CashBoxFormProps) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['cash-boxes'] });
+      queryClient.invalidateQueries({ queryKey: ['cash-boxes-history'] });
       if (cashBoxId) {
         queryClient.invalidateQueries({ queryKey: ['cash-box', cashBoxId] });
       }
       toast.success(
         mode === 'create' ? 'Caixa criado com sucesso!' : 'Caixa atualizado com sucesso!',
       );
-      navigate('/dashboard');
+      if (returnTo) {
+        navigate(returnTo, { state: { filters: returnFilters } });
+      } else {
+        navigate('/dashboard');
+      }
     },
     onError: (error) => {
       console.error('Erro ao salvar caixa:', error);
@@ -230,8 +241,13 @@ export function CashBoxForm({ mode, cashBoxId }: CashBoxFormProps) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['cash-boxes'] });
+      queryClient.invalidateQueries({ queryKey: ['cash-boxes-history'] });
       toast.success('Caixa excluído com sucesso.');
-      navigate('/dashboard');
+      if (returnTo) {
+        navigate(returnTo, { state: { filters: returnFilters } });
+      } else {
+        navigate('/dashboard');
+      }
     },
     onError: (error) => {
       console.error('Erro ao excluir caixa:', error);
@@ -268,8 +284,14 @@ export function CashBoxForm({ mode, cashBoxId }: CashBoxFormProps) {
           O caixa solicitado pode ter sido removido. Volte para o dashboard e selecione outro
           registro.
         </p>
-        <Button variant="outline" onClick={() => navigate('/dashboard')}>
-          Voltar ao dashboard
+        <Button variant="outline" onClick={() => {
+          if (returnTo) {
+            navigate(returnTo, { state: { filters: returnFilters } });
+          } else {
+            navigate('/dashboard');
+          }
+        }}>
+          {returnTo ? 'Voltar' : 'Voltar ao dashboard'}
         </Button>
       </div>
     );
@@ -307,7 +329,13 @@ export function CashBoxForm({ mode, cashBoxId }: CashBoxFormProps) {
     });
   };
 
-  const handleCancel = () => navigate('/dashboard');
+  const handleCancel = () => {
+    if (returnTo) {
+      navigate(returnTo, { state: { filters: returnFilters } });
+    } else {
+      navigate('/dashboard');
+    }
+  };
 
   const isSubmitting = mutation.isPending;
   const isDeleting = deleteMutation.isPending;

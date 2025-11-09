@@ -35,6 +35,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { formatCurrency } from '@/lib/money';
 import { formatDate, getTodayISO } from '@/lib/date';
 import { MoneyInput } from '@/components/MoneyInput';
@@ -52,7 +53,9 @@ import {
   BadgeCheck,
   Trash2,
   BarChart3,
+  Menu,
 } from 'lucide-react';
+import { useIsMobile } from '@/hooks/use-mobile';
 import type {
   CashBox,
   CashBoxSummary,
@@ -127,6 +130,8 @@ function computeBoxTotals(box: CashBoxWithRelations) {
 export default function Dashboard() {
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [startDate, setStartDate] = useState(getTodayISO());
   const [endDate, setEndDate] = useState(getTodayISO());
   const [cashBoxSearch, setCashBoxSearch] = useState('');
@@ -205,10 +210,15 @@ export default function Dashboard() {
       return (data ?? []) as CashBoxWithRelations[];
     },
     enabled: (isAdmin || !!user?.store_id) && isDateRangeValid && shouldFetch,
-    onSuccess: () => setShouldFetch(false),
-    onError: () => setShouldFetch(false),
   });
-  const cashBoxes = isDateRangeValid ? cashBoxesData : [];
+
+  useEffect(() => {
+    if (!isLoading && !isFetching) {
+      setShouldFetch(false);
+    }
+  }, [isLoading, isFetching]);
+
+  const cashBoxes = isDateRangeValid ? (cashBoxesData ?? []) : [];
 
   const { data: serviceTypes = [] } = useQuery<ServiceType[]>({
     queryKey: ['service-types'],
@@ -490,83 +500,120 @@ export default function Dashboard() {
     );
   }
 
+  const SidebarContent = () => (
+    <>
+      {/* Logo/Header */}
+      <div className="flex items-center gap-3 border-b border-slate-200 px-4 py-4 md:px-6 md:py-5">
+        <div className="rounded-xl bg-gradient-to-br from-cyan-50 to-blue-50 p-2 shadow-sm">
+          <img src="/logo.png" alt="TOP Vistorias" className="h-8 w-8 object-contain" />
+        </div>
+        <div>
+          <p className="text-sm font-semibold text-slate-900">TOP Vistorias</p>
+          <p className="text-xs text-slate-500">Dashboard</p>
+        </div>
+      </div>
+
+      {/* User Info */}
+      <div className="border-b border-slate-200 px-4 py-3 md:px-6 md:py-4">
+        <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Usuário</p>
+        <p className="mt-1 text-sm font-medium text-slate-900">{user?.name}</p>
+      </div>
+
+      {/* Navigation */}
+      <nav className="flex-1 space-y-1 px-2 py-4 md:px-3">
+        <button
+          onClick={() => {
+            navigate('/dashboard');
+            if (isMobile) setSidebarOpen(false);
+          }}
+          className="flex w-full items-center gap-3 rounded-lg bg-slate-100 px-3 py-2.5 text-sm font-medium text-slate-900 transition-colors hover:bg-slate-200"
+        >
+          <BarChart3 className="h-5 w-5" />
+          Balanço
+        </button>
+        <button
+          onClick={() => {
+            navigate('/historico');
+            if (isMobile) setSidebarOpen(false);
+          }}
+          className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
+        >
+          <BarChart3 className="h-5 w-5" />
+          Histórico
+        </button>
+        <button
+          onClick={() => {
+            navigate('/caixas/novo');
+            if (isMobile) setSidebarOpen(false);
+          }}
+          className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
+        >
+          <Plus className="h-5 w-5" />
+          Novo Caixa
+        </button>
+        <button
+          onClick={() => {
+            navigate('/receber');
+            if (isMobile) setSidebarOpen(false);
+          }}
+          className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
+        >
+          <DollarSign className="h-5 w-5" />
+          A Receber
+        </button>
+      </nav>
+
+      {/* Logout at bottom */}
+      <div className="border-t border-slate-200 p-2 md:p-3">
+        <button
+          onClick={signOut}
+          className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-red-600 transition-colors hover:bg-red-50"
+        >
+          <LogOut className="h-5 w-5" />
+          Sair
+        </button>
+      </div>
+    </>
+  );
+
   return (
     <>
     <div className="flex h-screen overflow-hidden bg-[#f5f5f7]">
-      {/* Sidebar estilo Apple */}
-      <aside className="flex w-64 flex-col border-r border-slate-200 bg-white">
-        {/* Logo/Header */}
-        <div className="flex items-center gap-3 border-b border-slate-200 px-6 py-5">
-          <div className="rounded-xl bg-gradient-to-br from-cyan-50 to-blue-50 p-2 shadow-sm">
-            <img src="/logo.png" alt="TOP Vistorias" className="h-8 w-8 object-contain" />
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-slate-900">TOP Vistorias</p>
-            <p className="text-xs text-slate-500">Dashboard</p>
-          </div>
-        </div>
-
-        {/* User Info */}
-        <div className="border-b border-slate-200 px-6 py-4">
-          <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Usuário</p>
-          <p className="mt-1 text-sm font-medium text-slate-900">{user?.name}</p>
-        </div>
-
-        {/* Navigation */}
-        <nav className="flex-1 space-y-1 px-3 py-4">
-          <button
-            onClick={() => navigate('/dashboard')}
-            className="flex w-full items-center gap-3 rounded-lg bg-slate-100 px-3 py-2.5 text-sm font-medium text-slate-900 transition-colors hover:bg-slate-200"
-          >
-            <BarChart3 className="h-5 w-5" />
-            Balanço
-          </button>
-          <button
-            onClick={() => navigate('/historico')}
-            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
-          >
-            <BarChart3 className="h-5 w-5" />
-            Histórico
-          </button>
-          <button
-            onClick={() => navigate('/caixas/novo')}
-            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
-          >
-            <Plus className="h-5 w-5" />
-            Novo Caixa
-          </button>
-          <button
-            onClick={() => navigate('/receber')}
-            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
-          >
-            <DollarSign className="h-5 w-5" />
-            A Receber
-          </button>
-        </nav>
-
-        {/* Logout at bottom */}
-        <div className="border-t border-slate-200 p-3">
-          <button
-            onClick={signOut}
-            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-red-600 transition-colors hover:bg-red-50"
-          >
-            <LogOut className="h-5 w-5" />
-            Sair
-          </button>
-        </div>
+      {/* Sidebar Desktop */}
+      <aside className="hidden md:flex w-64 flex-col border-r border-slate-200 bg-white">
+        <SidebarContent />
       </aside>
 
+      {/* Sidebar Mobile */}
+      <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
+        <SheetContent side="left" className="w-64 p-0">
+          <div className="flex h-full flex-col bg-white">
+            <SidebarContent />
+          </div>
+        </SheetContent>
+      </Sheet>
+
       {/* Main Content */}
-      <main className="flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-7xl space-y-6 p-8">
+      <main className="flex-1 overflow-y-auto relative">
+        {/* Mobile Menu Button - Sticky */}
+        <div className="sticky top-0 z-50 md:hidden bg-[#f5f5f7] border-b border-slate-200 px-4 py-3">
+          <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
+            <SheetTrigger asChild>
+              <Button variant="outline" size="icon" className="h-9 w-9">
+                <Menu className="h-5 w-5" />
+              </Button>
+            </SheetTrigger>
+          </Sheet>
+        </div>
+        <div className="mx-auto max-w-7xl space-y-4 p-4 md:space-y-6 md:p-8">
           {/* Header */}
           <div>
-            <h1 className="text-3xl font-semibold text-slate-900">Dashboard</h1>
+            <h1 className="text-2xl md:text-3xl font-semibold text-slate-900">Dashboard</h1>
             <p className="mt-1 text-sm text-slate-600">Visão geral dos seus caixas</p>
           </div>
 
         {/* Date Selector - Estilo Apple */}
-        <div className="rounded-2xl bg-white p-6 shadow-sm">
+        <div className="rounded-2xl bg-white p-4 md:p-6 shadow-sm">
           <h2 className="text-base font-semibold text-slate-900">Período</h2>
           <div className="mt-4 flex flex-col gap-4 md:flex-row md:items-end md:gap-4">
             <div className="flex flex-col gap-2">
@@ -632,88 +679,88 @@ export default function Dashboard() {
         </div>
 
         {/* Dashboard Cards - Minimalista */}
-        <div className="grid gap-6 md:grid-cols-2">
+        <div className="grid gap-4 md:gap-6 grid-cols-1 md:grid-cols-2">
           {/* Faturamento Bruto */}
-          <div className="rounded-2xl bg-emerald-500 p-8 shadow-lg">
+          <div className="rounded-2xl bg-emerald-500 p-6 md:p-8 shadow-lg">
             <div className="flex items-start justify-between">
               <div className="flex-1">
-                <p className="text-sm font-medium uppercase tracking-wide text-emerald-50">Faturamento Bruto</p>
-                <p className="mt-3 text-4xl font-bold text-white">
+                <p className="text-xs md:text-sm font-medium uppercase tracking-wide text-emerald-50">Faturamento Bruto</p>
+                <p className="mt-2 md:mt-3 text-2xl md:text-4xl font-bold text-white">
                   {formatCurrency(summary.gross_total)}
                 </p>
-                <p className="mt-2 text-sm text-emerald-100">
+                <p className="mt-1 md:mt-2 text-xs md:text-sm text-emerald-100">
                   Total de entradas no período
                 </p>
               </div>
-              <div className="flex h-14 w-14 items-center justify-center rounded-full bg-white/20">
-                <TrendingUp className="h-7 w-7 text-white" />
+              <div className="flex h-12 w-12 md:h-14 md:w-14 items-center justify-center rounded-full bg-white/20 flex-shrink-0">
+                <TrendingUp className="h-6 w-6 md:h-7 md:w-7 text-white" />
               </div>
             </div>
           </div>
 
           {/* Valor Líquido */}
-          <div className="rounded-2xl bg-blue-500 p-8 shadow-lg">
+          <div className="rounded-2xl bg-blue-500 p-6 md:p-8 shadow-lg">
             <div className="flex items-start justify-between">
               <div className="flex-1">
-                <p className="text-sm font-medium uppercase tracking-wide text-blue-50">Valor Líquido</p>
-                <p className="mt-3 text-4xl font-bold text-white">
+                <p className="text-xs md:text-sm font-medium uppercase tracking-wide text-blue-50">Valor Líquido</p>
+                <p className="mt-2 md:mt-3 text-2xl md:text-4xl font-bold text-white">
                   {formatCurrency(summary.net_total)}
                 </p>
-                <p className="mt-2 text-sm text-blue-100">
+                <p className="mt-1 md:mt-2 text-xs md:text-sm text-blue-100">
                   Faturamento após despesas
                 </p>
               </div>
-              <div className="flex h-14 w-14 items-center justify-center rounded-full bg-white/20">
-                <DollarSign className="h-7 w-7 text-white" />
+              <div className="flex h-12 w-12 md:h-14 md:w-14 items-center justify-center rounded-full bg-white/20 flex-shrink-0">
+                <DollarSign className="h-6 w-6 md:h-7 md:w-7 text-white" />
               </div>
             </div>
           </div>
         </div>
 
         {/* Cards Secundários */}
-        <div className="grid gap-4 md:grid-cols-4">
+        <div className="grid gap-3 md:gap-4 grid-cols-2 md:grid-cols-4">
           {/* PIX */}
-          <div className="rounded-2xl bg-white p-6 shadow-sm">
-            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-purple-100">
-              <svg className="h-7 w-7 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <div className="rounded-2xl bg-white p-4 md:p-6 shadow-sm">
+            <div className="mb-3 md:mb-4 flex h-10 w-10 md:h-14 md:w-14 items-center justify-center rounded-full bg-purple-100">
+              <svg className="h-5 w-5 md:h-7 md:w-7 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
               </svg>
             </div>
-            <p className="text-xs font-medium uppercase tracking-wide text-slate-400">PIX</p>
-            <p className="mt-2 text-2xl font-bold text-slate-900">
+            <p className="text-[10px] md:text-xs font-medium uppercase tracking-wide text-slate-400">PIX</p>
+            <p className="mt-1 md:mt-2 text-lg md:text-2xl font-bold text-slate-900">
               {formatCurrency(summary.pix_total)}
             </p>
           </div>
 
           {/* Cartão */}
-          <div className="rounded-2xl bg-white p-6 shadow-sm">
-            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-blue-100">
-              <CreditCard className="h-7 w-7 text-blue-600" />
+          <div className="rounded-2xl bg-white p-4 md:p-6 shadow-sm">
+            <div className="mb-3 md:mb-4 flex h-10 w-10 md:h-14 md:w-14 items-center justify-center rounded-full bg-blue-100">
+              <CreditCard className="h-5 w-5 md:h-7 md:w-7 text-blue-600" />
             </div>
-            <p className="text-xs font-medium uppercase tracking-wide text-slate-400">CARTÃO</p>
-            <p className="mt-2 text-2xl font-bold text-slate-900">
+            <p className="text-[10px] md:text-xs font-medium uppercase tracking-wide text-slate-400">CARTÃO</p>
+            <p className="mt-1 md:mt-2 text-lg md:text-2xl font-bold text-slate-900">
               {formatCurrency(summary.cartao_total)}
             </p>
           </div>
 
           {/* Despesas */}
-          <div className="rounded-2xl bg-white p-6 shadow-sm">
-            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-red-100">
-              <TrendingDown className="h-7 w-7 text-red-600" />
+          <div className="rounded-2xl bg-white p-4 md:p-6 shadow-sm">
+            <div className="mb-3 md:mb-4 flex h-10 w-10 md:h-14 md:w-14 items-center justify-center rounded-full bg-red-100">
+              <TrendingDown className="h-5 w-5 md:h-7 md:w-7 text-red-600" />
             </div>
-            <p className="text-xs font-medium uppercase tracking-wide text-slate-400">DESPESAS</p>
-            <p className="mt-2 text-2xl font-bold text-red-600">
+            <p className="text-[10px] md:text-xs font-medium uppercase tracking-wide text-slate-400">DESPESAS</p>
+            <p className="mt-1 md:mt-2 text-lg md:text-2xl font-bold text-red-600">
               {formatCurrency(summary.expenses_total)}
             </p>
           </div>
 
           {/* Retornos */}
-          <div className="rounded-2xl bg-white p-6 shadow-sm">
-            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-slate-100">
-              <RotateCcw className="h-7 w-7 text-slate-600" />
+          <div className="rounded-2xl bg-white p-4 md:p-6 shadow-sm">
+            <div className="mb-3 md:mb-4 flex h-10 w-10 md:h-14 md:w-14 items-center justify-center rounded-full bg-slate-100">
+              <RotateCcw className="h-5 w-5 md:h-7 md:w-7 text-slate-600" />
             </div>
-            <p className="text-xs font-medium uppercase tracking-wide text-slate-400">RETORNOS</p>
-            <p className="mt-2 text-2xl font-bold text-slate-900">
+            <p className="text-[10px] md:text-xs font-medium uppercase tracking-wide text-slate-400">RETORNOS</p>
+            <p className="mt-1 md:mt-2 text-lg md:text-2xl font-bold text-slate-900">
               {summary.return_count}
             </p>
           </div>
@@ -741,7 +788,7 @@ export default function Dashboard() {
             <Label>Placa</Label>
             <Input value={editForm.plate} onChange={(event) => handleEditChange('plate', event.target.value)} />
           </div>
-          <div className="grid gap-4 md:grid-cols-2">
+          <div className="grid gap-4 grid-cols-1 md:grid-cols-2">
             <div className="space-y-2">
               <Label>Servico relacionado</Label>
               <Select

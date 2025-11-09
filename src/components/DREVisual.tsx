@@ -70,12 +70,18 @@ export function DREVisual({ data, title = 'DRE Visual' }: DREVisualProps) {
     }
     
     if (isCritical && fixedExpensesVsRevenuePct > 80) {
-      const reduction = ((fixedExpensesVsRevenuePct - 70) / 100) * data.fixedExpensesCents;
-      insights.push({
-        icon: <TrendingUp className="h-4 w-4" />,
-        text: `Reduzir custos fixos em ${formatCurrency(reduction)} tornaria resultado positivo`,
-        severity: 'suggestion' as const,
-      });
+      // Calcula a redução necessária: Fixas Atuais - (Receita - Variáveis)
+      // Para tornar resultado positivo: Receita - Variáveis - Fixas > 0
+      // Logo: Fixas máximas = Receita - Variáveis
+      const maxFixedExpenses = data.totalRevenueCents - data.variableExpensesCents;
+      const reduction = data.fixedExpensesCents - maxFixedExpenses;
+      if (reduction > 0) {
+        insights.push({
+          icon: <TrendingUp className="h-4 w-4" />,
+          text: `Reduzir custos fixos em ${formatCurrency(reduction)} tornaria resultado positivo`,
+          severity: 'suggestion' as const,
+        });
+      }
     }
     
     return insights;

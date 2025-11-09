@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { CashBoxForm } from '@/features/cash-box/components/CashBoxForm';
 
@@ -7,6 +7,9 @@ export default function CashBoxEdit() {
   const { id } = useParams<{ id: string }>();
   const { user } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const returnTo = (location.state as { returnTo?: string; filters?: any })?.returnTo;
+  const filters = (location.state as { returnTo?: string; filters?: any })?.filters;
 
   useEffect(() => {
     if (!id) {
@@ -22,5 +25,5 @@ export default function CashBoxEdit() {
     return null;
   }
 
-  return <CashBoxForm mode="edit" cashBoxId={id} />;
+  return <CashBoxForm mode="edit" cashBoxId={id} returnTo={returnTo} returnFilters={filters} />;
 }

@@ -62,11 +62,7 @@ const App = () => (
             />
             <Route
               path="/caixas/:id"
-              element={
-                <ProtectedRoute requireRole="vistoriador">
-                  <CashBoxEdit />
-                </ProtectedRoute>
-              }
+              element={<CashBoxEdit />}
             />
             <Route
               path="/admin"
