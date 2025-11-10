@@ -33,6 +33,7 @@ import {
   fetchFixedExpenses,
   fetchVariableExpenses,
 } from '@/features/admin/api';
+import { getServiceDefaultPrice } from '@/features/cash-box/utils';
 import type {
   AdminFilters,
   CashBoxWithRelations,
@@ -362,6 +363,18 @@ const AdminDashboard = () => {
       return emptyMetrics;
     }
 
+    // Mapa de títulos de despesas fixas por loja+mês (normalizados) para evitar dupla contagem
+    const fixedTemplateTitlesByStoreMonth = new Map<string, Set<string>>();
+    fixedExpenses.forEach((expense) => {
+      const normalizedTitle = normalizeText(expense.title).trim();
+      if (!normalizedTitle) return;
+      const monthKey = monthKeyFrom(expense.month_year);
+      const storeMonthKey = `${expense.store_id}-${monthKey}`;
+      const currentSet = fixedTemplateTitlesByStoreMonth.get(storeMonthKey) ?? new Set<string>();
+      currentSet.add(normalizedTitle);
+      fixedTemplateTitlesByStoreMonth.set(storeMonthKey, currentSet);
+    });
+
     // Separa fechamentos mensais dos caixas diários
     const monthlyClosures = boxes.filter(
       (box) => box.note && box.note.startsWith('Fechamento manual'),
@@ -370,17 +383,44 @@ const AdminDashboard = () => {
       (box) => !box.note || !box.note.startsWith('Fechamento manual'),
     );
 
-    // Mapa de meses que têm fechamento mensal (para ignorar caixas diários desses meses)
-    const monthsWithClosure = new Set<string>();
+    // Controle por loja+mês para reaproveitar despesas específicas do fechamento
+    const storeMonthClosureSet = new Set<string>();
+    const closureExpensesByStoreMonth = new Map<string, Map<string, number>>();
+
     monthlyClosures.forEach((closure) => {
       const monthKey = monthKeyFrom(closure.date);
-      monthsWithClosure.add(monthKey);
+      const storeId = closure.store_id;
+      if (!storeId) return;
+
+      const storeMonthKey = `${storeId}-${monthKey}`;
+      storeMonthClosureSet.add(storeMonthKey);
+
+      const expenses = closure.cash_box_expenses ?? [];
+      if (!expenses.length) return;
+
+      const normalizedMap =
+        closureExpensesByStoreMonth.get(storeMonthKey) ?? new Map<string, number>();
+
+      expenses.forEach((expense) => {
+        const normalizedTitle = normalizeText(expense.title).trim();
+        if (!normalizedTitle) return;
+        const amount = expense.amount_cents ?? 0;
+        if (amount <= 0) return;
+        normalizedMap.set(normalizedTitle, (normalizedMap.get(normalizedTitle) ?? 0) + amount);
+      });
+
+      if (normalizedMap.size > 0) {
+        closureExpensesByStoreMonth.set(storeMonthKey, normalizedMap);
+      }
     });
 
     // Filtra caixas diários: remove os que são de meses que têm fechamento
     const boxesToProcess = dailyBoxes.filter((box) => {
+      const storeId = box.store_id;
+      if (!storeId) return true;
       const monthKey = monthKeyFrom(box.date);
-      return !monthsWithClosure.has(monthKey);
+      const storeMonthKey = `${storeId}-${monthKey}`;
+      return !storeMonthClosureSet.has(storeMonthKey);
     });
 
     // Combina fechamentos mensais com caixas diários (apenas dos meses sem fechamento)
@@ -438,8 +478,7 @@ const AdminDashboard = () => {
         const unitPrice =
           service.unit_price_cents ??
           service.total_cents ??
-          serviceType?.default_price_cents ??
-          0;
+          (serviceType ? getServiceDefaultPrice(serviceType) : 0);
         const totalCents = service.total_cents ?? unitPrice * quantity;
 
         // Verifica se o serviço conta no faturamento (counts_in_gross)
@@ -492,11 +531,22 @@ const AdminDashboard = () => {
     // Filtra despesas variáveis: se o mês tem fechamento, só conta despesas do fechamento
     const variableExpensesToProcess = variableExpenses.filter((expense) => {
       const monthKey = monthKeyFrom(expense.cash_box.date);
-      const hasClosure = monthsWithClosure.has(monthKey);
-      if (!hasClosure) return true; // Sem fechamento, conta todas as despesas
-      
-      // Com fechamento, só conta despesas que vêm do fechamento (caixa com note "Fechamento manual")
-      return expense.cash_box.note && expense.cash_box.note.startsWith('Fechamento manual');
+      const storeMonthKey = `${expense.cash_box.store_id}-${monthKey}`;
+      const hasClosure = storeMonthClosureSet.has(storeMonthKey);
+      if (!hasClosure) return true; // Sem fechamento nesse store+mês, mantém comportamento original
+
+      const isClosureExpense =
+        expense.cash_box.note && expense.cash_box.note.startsWith('Fechamento manual');
+      if (!isClosureExpense) return false;
+
+      const normalizedTitle = normalizeText(expense.title).trim();
+      if (!normalizedTitle) return true;
+      const fixedTemplates = fixedTemplateTitlesByStoreMonth.get(storeMonthKey);
+      if (fixedTemplates?.has(normalizedTitle)) {
+        return false; // Já será contabilizada como fixa via fechamento
+      }
+
+      return true;
     });
 
     variableExpensesToProcess.forEach((expense) => {
@@ -533,12 +583,18 @@ const AdminDashboard = () => {
     });
 
     fixedExpenses.forEach((expense) => {
-      const amount = expense.amount_cents ?? 0;
+      const normalizedTitle = normalizeText(expense.title).trim();
+      const monthKey = monthKeyFrom(expense.month_year);
+      const monthLabel = monthLabelFrom(expense.month_year);
+      const storeMonthKey = `${expense.store_id}-${monthKey}`;
+      const hasStoreClosure = storeMonthClosureSet.has(storeMonthKey);
+      const closureAmount = hasStoreClosure
+        ? closureExpensesByStoreMonth.get(storeMonthKey)?.get(normalizedTitle)
+        : undefined;
+      const amount = hasStoreClosure ? closureAmount ?? 0 : expense.amount_cents ?? 0;
       if (amount <= 0) return;
       totalFixedCents += amount;
 
-      const monthKey = monthKeyFrom(expense.month_year);
-      const monthLabel = monthLabelFrom(expense.month_year);
       const monthly = ensureMonthlyAggregate(monthKey, monthLabel);
       monthly.fixedCents += amount;
 

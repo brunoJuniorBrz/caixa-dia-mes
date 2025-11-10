@@ -1,5 +1,6 @@
-ï»¿import { supabase } from '@/integrations/supabase/client';
+import { supabase } from '@/integrations/supabase/client';
 import type { AppUser, ServiceType, Store } from '@/types/database';
+import { getServiceDefaultPrice } from '@/features/cash-box/utils';
 import { endOfMonth, format, parse } from 'date-fns';
 import type {
   AdminFilters,
@@ -263,12 +264,12 @@ function buildMonthlyClosureNote(month: string): string {
 function getMonthRange(month: string): { startDate: string; endDate: string } {
   const [year, monthPart] = month.split('-');
   if (!year || !monthPart) {
-    throw new Error('MÃªs invÃ¡lido para fechamento mensal.');
+    throw new Error('Mês inválido para fechamento mensal.');
   }
 
   const baseDate = parse(`${month}-01`, 'yyyy-MM-dd', new Date());
   if (Number.isNaN(baseDate.getTime())) {
-    throw new Error('MÃªs invÃ¡lido para fechamento mensal.');
+    throw new Error('Mês inválido para fechamento mensal.');
   }
 
   const startDate = format(baseDate, 'yyyy-MM-dd');
@@ -386,13 +387,13 @@ export async function upsertMonthlyClosure({
     .map((service) => {
       const serviceType = serviceTypeMap.get(service.service_type_id);
       if (!serviceType) {
-        console.warn(`Tipo de serviÃ§o nÃ£o encontrado: ${service.service_type_id}`);
+        console.warn(`Tipo de serviço não encontrado: ${service.service_type_id}`);
         return null;
       }
       return {
         service_type_id: service.service_type_id,
         quantity: Math.max(0, Math.floor(service.quantity)),
-        unit_price_cents: serviceType.default_price_cents,
+        unit_price_cents: service.unit_price_cents ?? getServiceDefaultPrice(serviceType),
       };
     })
     .filter((entry): entry is { service_type_id: string; quantity: number; unit_price_cents: number } => Boolean(entry))
@@ -436,7 +437,7 @@ export async function upsertMonthlyClosure({
       .single();
 
     if (createError || !createdBox) {
-      throw createError ?? new Error('NÃ£o foi possÃ­vel criar o fechamento mensal.');
+      throw createError ?? new Error('Não foi possível criar o fechamento mensal.');
     }
 
     cashBoxId = createdBox.id;
@@ -504,3 +505,4 @@ export async function deleteMonthlyClosure(cashBoxId: string): Promise<void> {
     throw error;
   }
 }
+

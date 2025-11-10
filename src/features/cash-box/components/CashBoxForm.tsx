@@ -38,6 +38,7 @@ import {
   calculateCashBoxTotals,
   mapCashBoxToFormData,
   normalizeCashBoxFormData,
+  getServiceDefaultPrice,
 } from '../utils';
 import {
   createCashBox,
@@ -456,7 +457,7 @@ export function CashBoxForm({ mode, cashBoxId, returnTo, returnFilters }: CashBo
               const service = mappedService?.service ?? services?.[fallbackIndex];
               const Icon =
                 SERVICE_ICON_MAP[serviceType.code as keyof typeof SERVICE_ICON_MAP] ?? ClipboardList;
-              const unitPrice = service?.unit_price_cents ?? serviceType.default_price_cents;
+              const unitPrice = service?.unit_price_cents ?? getServiceDefaultPrice(serviceType);
               const quantity = service?.quantity ?? 0;
               const total = unitPrice * quantity;
 
@@ -835,4 +836,3 @@ function LoadingState() {
     </div>
   );
 }
-

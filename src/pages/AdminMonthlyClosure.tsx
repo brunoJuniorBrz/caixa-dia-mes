@@ -18,7 +18,8 @@ import { formatCurrency } from '@/lib/money';
 import { fetchStores, fetchMonthlyClosure, upsertMonthlyClosure, deleteMonthlyClosure } from '@/features/admin/api';
 import type { Store } from '@/types/database';
 import type { MonthlyClosureData, MonthlyClosurePayload } from '@/features/admin/types';
-import { SERVICE_BADGE_CLASSNAME, SERVICE_ICON_MAP } from '@/features/cash-box/constants';
+import { SERVICE_BADGE_CLASSNAME, SERVICE_ICON_MAP, SERVICE_CODE_ORDER } from '@/features/cash-box/constants';
+import { getServiceDefaultPrice } from '@/features/cash-box/utils';
 
 const MONTH_PLACEHOLDER = 'Selecione um mês';
 
@@ -43,6 +44,7 @@ export default function AdminMonthlyClosure() {
   const [selectedStore, setSelectedStore] = useState<string | 'all'>('all');
   const [selectedMonth, setSelectedMonth] = useState<string>('');
   const [serviceQuantities, setServiceQuantities] = useState<Record<string, number>>({});
+  const [servicePrices, setServicePrices] = useState<Record<string, number>>({});
   const [variableExpenses, setVariableExpenses] = useState<VariableExpenseDraft[]>([]);
   const [showExpenseDialog, setShowExpenseDialog] = useState(false);
   const [expenseDraft, setExpenseDraft] = useState<VariableExpenseDraft>({ title: '', amount_cents: 0, source: 'avulsa' });
@@ -105,6 +107,7 @@ export default function AdminMonthlyClosure() {
   useEffect(() => {
     if (!closureData) {
       setServiceQuantities({});
+      setServicePrices({});
       setVariableExpenses([]);
       setEditingExpenseIndex(null);
       setExpenseDraft({ title: '', amount_cents: 0, source: 'avulsa' });
@@ -116,7 +119,14 @@ export default function AdminMonthlyClosure() {
       return acc;
     }, {});
 
+    // Carrega preços dos serviços salvos
+    const prices = closureData.services.reduce<Record<string, number>>((acc, service) => {
+      acc[service.service_type_id] = service.unit_price_cents;
+      return acc;
+    }, {});
+
     setServiceQuantities(quantities);
+    setServicePrices(prices);
 
     const shouldUseDefaults =
       !closureData.cashBoxId &&
@@ -140,6 +150,14 @@ export default function AdminMonthlyClosure() {
   const handleQuantityChange = (serviceId: string, quantity: number) => {
     const normalized = Number.isFinite(quantity) ? Math.max(0, Math.floor(quantity)) : 0;
     setServiceQuantities((prev) => ({
+      ...prev,
+      [serviceId]: normalized,
+    }));
+  };
+
+  const handlePriceChange = (serviceId: string, priceCents: number) => {
+    const normalized = Number.isFinite(priceCents) ? Math.max(0, Math.floor(priceCents)) : 0;
+    setServicePrices((prev) => ({
       ...prev,
       [serviceId]: normalized,
     }));
@@ -231,10 +249,18 @@ export default function AdminMonthlyClosure() {
       userId: user.id,
       services: Object.entries(serviceQuantities)
         .filter(([, quantity]) => quantity > 0)
-        .map(([serviceTypeId, quantity]) => ({
-          service_type_id: serviceTypeId,
-          quantity,
-        })),
+        .map(([serviceTypeId, quantity]) => {
+          const service = services.find(s => s.id === serviceTypeId);
+          const defaultPrice = service ? getServiceDefaultPrice(service) : 0;
+          const savedPrice = servicePrices[serviceTypeId];
+          const unitPrice = savedPrice !== undefined ? savedPrice : defaultPrice;
+          
+          return {
+            service_type_id: serviceTypeId,
+            quantity,
+            unit_price_cents: unitPrice,
+          };
+        }),
       expenses: variableExpenses.filter((expense) => expense.title.trim() && expense.amount_cents > 0),
     };
 
@@ -246,10 +272,34 @@ export default function AdminMonthlyClosure() {
     deleteClosureMutation.mutate(closureData.cashBoxId);
   };
 
-  const services = closureData?.serviceCatalog ?? [];
+  // Ordena os serviços: carro - moto - caminhonete - caminhão - pesquise - e o restante
+  const services = useMemo(() => {
+    const catalog = closureData?.serviceCatalog ?? [];
+    
+    // Cria um mapa de ordem dos códigos
+    const orderMap = new Map(SERVICE_CODE_ORDER.map((code, index) => [code, index]));
+    
+    // Separa serviços conhecidos e desconhecidos
+    const knownServices = catalog.filter(service => orderMap.has(service.code));
+    const unknownServices = catalog.filter(service => !orderMap.has(service.code));
+    
+    // Ordena os conhecidos pela ordem definida
+    const sortedKnown = knownServices.sort((a, b) => {
+      const orderA = orderMap.get(a.code) ?? Infinity;
+      const orderB = orderMap.get(b.code) ?? Infinity;
+      return orderA - orderB;
+    });
+    
+    // Retorna ordenados: conhecidos primeiro, depois desconhecidos
+    return [...sortedKnown, ...unknownServices];
+  }, [closureData?.serviceCatalog]);
+
   const totalServicesCents = services.reduce((acc, service) => {
     const quantity = serviceQuantities[service.id] ?? 0;
-    return acc + quantity * service.default_price_cents;
+    const defaultPrice = getServiceDefaultPrice(service);
+    const savedPrice = servicePrices[service.id];
+    const unitPrice = savedPrice !== undefined ? savedPrice : defaultPrice;
+    return acc + quantity * unitPrice;
   }, 0);
   const totalExpensesCents = variableExpenses.reduce((acc, expense) => acc + expense.amount_cents, 0);
   const netTotalCents = totalServicesCents - totalExpensesCents;
@@ -449,7 +499,11 @@ export default function AdminMonthlyClosure() {
                   <div className="grid gap-3 grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
                     {services.map((service) => {
                       const quantity = serviceQuantities[service.id] ?? 0;
-                      const total = quantity * service.default_price_cents;
+                      const defaultPrice = getServiceDefaultPrice(service);
+                      // Se há preço salvo/editado, usa ele; senão, usa o padrão
+                      const savedPrice = servicePrices[service.id];
+                      const unitPrice = savedPrice !== undefined ? savedPrice : defaultPrice;
+                      const total = quantity * unitPrice;
                       const Icon =
                         SERVICE_ICON_MAP[service.code as keyof typeof SERVICE_ICON_MAP] ?? ClipboardList;
 
@@ -475,24 +529,30 @@ export default function AdminMonthlyClosure() {
                               </p>
                             </div>
                           </div>
-                          <div className="flex items-end justify-between gap-3">
-                            <div>
-                              <p className="text-[11px] text-muted-foreground">Valor unitário</p>
-                              <p className="text-xs font-semibold text-slate-900">
-                                {formatCurrency(service.default_price_cents)}
-                              </p>
+                          <div className="flex flex-col gap-2">
+                            <div className="flex items-end justify-between gap-2">
+                              <div className="flex-1">
+                                <p className="text-[11px] text-muted-foreground mb-1">Valor unitário (R$)</p>
+                                <MoneyInput
+                                  value={unitPrice}
+                                  onChange={(value) => handlePriceChange(service.id, value)}
+                                />
+                              </div>
+                              <div className="flex-1">
+                                <p className="text-[11px] text-muted-foreground mb-1">Quantidade</p>
+                                <Input
+                                  type="number"
+                                  min={0}
+                                  inputMode="numeric"
+                                  className="h-9 rounded border-slate-200 text-center text-sm"
+                                  value={quantity}
+                                  onChange={(event) => {
+                                    const nextValue = Number.parseInt(event.target.value, 10);
+                                    handleQuantityChange(service.id, Number.isNaN(nextValue) ? 0 : nextValue);
+                                  }}
+                                />
+                              </div>
                             </div>
-                            <Input
-                              type="number"
-                              min={0}
-                              inputMode="numeric"
-                              className="h-9 w-20 rounded border-slate-200 text-center text-sm"
-                              value={quantity}
-                              onChange={(event) => {
-                                const nextValue = Number.parseInt(event.target.value, 10);
-                                handleQuantityChange(service.id, Number.isNaN(nextValue) ? 0 : nextValue);
-                              }}
-                            />
                           </div>
                         </div>
                       );
@@ -647,7 +707,6 @@ export default function AdminMonthlyClosure() {
     </div>
   );
 }
-
 
 
 

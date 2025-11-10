@@ -1,6 +1,7 @@
 import { cashBoxDefaultValues, type CashBoxFormData } from '@/schemas/cash-box';
 import type { ServiceType } from '@/types/database';
-import { SERVICE_CODE_ORDER } from './constants';
+import { SERVICE_CODE_ORDER, SERVICE_PRICE_FALLBACKS } from './constants';
+import type { ServiceCode } from './constants';
 import type {
   CashBoxTotals,
   CashBoxWithRelations,
@@ -32,6 +33,16 @@ function buildOrderedServiceTypes(serviceTypes: ServiceType[] | undefined): Serv
   return [...primary, ...extras];
 }
 
+export function getServiceDefaultPrice(serviceType: ServiceType): number {
+  const defaultPrice = serviceType.default_price_cents ?? 0;
+  if (defaultPrice > 0) {
+    return defaultPrice;
+  }
+
+  const override = SERVICE_PRICE_FALLBACKS[serviceType.code as ServiceCode];
+  return override ?? 0;
+}
+
 export function normalizeCashBoxFormData({
   data,
   serviceTypes,
@@ -48,7 +59,7 @@ export function normalizeCashBoxFormData({
     return {
       service_type_id: serviceType.id,
       quantity: existing?.quantity ?? 0,
-      unit_price_cents: existing?.unit_price_cents ?? serviceType.default_price_cents,
+      unit_price_cents: existing?.unit_price_cents ?? getServiceDefaultPrice(serviceType),
     };
   });
 
