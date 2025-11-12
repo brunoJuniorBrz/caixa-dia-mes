@@ -15,6 +15,7 @@ import CashBoxNew from "./pages/CashBoxNew";
 import CashBoxEdit from "./pages/CashBoxEdit";
 import AdminDashboard from "./pages/AdminDashboard";
 import AdminMonthlyClosure from "./pages/AdminMonthlyClosure";
+import AdminFixedExpenses from "./pages/AdminFixedExpenses";
 
 const queryClient = new QueryClient();
 
@@ -77,6 +78,14 @@ const App = () => (
               element={
                 <ProtectedRoute requireRole="admin">
                   <AdminMonthlyClosure />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/contas-fixas"
+              element={
+                <ProtectedRoute requireRole="admin">
+                  <AdminFixedExpenses />
                 </ProtectedRoute>
               }
             />

@@ -1,10 +1,17 @@
-﻿import { useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { subDays, formatISO, format, parseISO, differenceInDays, startOfMonth, endOfMonth, startOfDay, endOfDay } from 'date-fns';
-import html2canvas from 'html2canvas';
-import jsPDF from 'jspdf';
-import { Download, Loader2, LogOut, Calendar, BarChart3, DollarSign, Menu } from 'lucide-react';
+import {
+  Download,
+  Loader2,
+  LogOut,
+  Calendar,
+  BarChart3,
+  DollarSign,
+  Menu,
+  ClipboardList,
+} from 'lucide-react';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { Button } from '@/components/ui/button';
@@ -48,13 +55,38 @@ import { useAuth } from '@/hooks/useAuth';
 import { KpiCard } from '@/components/KpiCard';
 import { InsightsIA } from '@/components/InsightsIA';
 import { AlertsList, type AlertItem } from '@/components/AlertsList';
-import { ChartWaterfall } from '@/components/charts/ChartWaterfall';
-import { ChartHeatmap } from '@/components/charts/ChartHeatmap';
-import { MarginBarChart } from '@/components/charts/MarginBarChart';
-import { MarginPercentageChart } from '@/components/charts/MarginPercentageChart';
-import { DREVisual } from '@/components/DREVisual';
 import { DetailModal } from '@/components/DetailModal';
 import { formatCurrency, formatPercent } from '@/utils/format';
+
+const ChartWaterfall = lazy(() =>
+  import('@/components/charts/ChartWaterfall').then((module) => ({
+    default: module.ChartWaterfall,
+  })),
+);
+
+const ChartHeatmap = lazy(() =>
+  import('@/components/charts/ChartHeatmap').then((module) => ({
+    default: module.ChartHeatmap,
+  })),
+);
+
+const MarginBarChart = lazy(() =>
+  import('@/components/charts/MarginBarChart').then((module) => ({
+    default: module.MarginBarChart,
+  })),
+);
+
+const MarginPercentageChart = lazy(() =>
+  import('@/components/charts/MarginPercentageChart').then((module) => ({
+    default: module.MarginPercentageChart,
+  })),
+);
+
+const FinancialTrendChart = lazy(() =>
+  import('@/components/charts/FinancialTrendChart').then((module) => ({
+    default: module.FinancialTrendChart,
+  })),
+);
 
 interface MetricCardProps {
   title: string;
@@ -143,6 +175,137 @@ function getPeriodPreset(preset: PeriodPreset): { start: string; end: string } {
     default:
       return getDefaultDateRange();
   }
+}
+
+function normalizeMonthRange(start?: string, end?: string) {
+  if (!start || !end) return null;
+  try {
+    const normalizedStart = formatISO(startOfMonth(parseISO(start)), { representation: 'date' });
+    const normalizedEnd = formatISO(endOfMonth(parseISO(end)), { representation: 'date' });
+    return { start: normalizedStart, end: normalizedEnd };
+  } catch (error) {
+    console.warn('Não foi possível normalizar as datas do filtro de despesas fixas:', error);
+    return { start, end };
+  }
+}
+
+const ChartFallback = ({ label }: { label?: string }) => (
+  <div className="flex h-[320px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-white text-sm text-slate-500">
+    {label ? `Carregando ${label}...` : 'Carregando visualização...'}
+  </div>
+);
+
+interface FinancialPulseCardProps {
+  revenueCents: number;
+  variableCents: number;
+  fixedCents: number;
+  netCents: number;
+  deltas: {
+    receita: number;
+    variavel: number;
+    fixa: number;
+    net: number;
+  };
+}
+
+function formatDeltaLabel(value: number) {
+  if (!Number.isFinite(value)) return '0%';
+  const rounded = Number.isInteger(value) ? value : Number(value.toFixed(1));
+  const sign = rounded > 0 ? '+' : '';
+  return `${sign}${rounded}%`;
+}
+
+function FinancialPulseCard({
+  revenueCents,
+  variableCents,
+  fixedCents,
+  netCents,
+  deltas,
+}: FinancialPulseCardProps) {
+  const totalCosts = variableCents + fixedCents;
+  const marginPercent = revenueCents > 0 ? (netCents / revenueCents) * 100 : 0;
+  const progress = (value: number) => {
+    if (revenueCents <= 0) return 0;
+    return Math.min(100, Math.max(0, (value / revenueCents) * 100));
+  };
+
+  const items = [
+    {
+      label: 'Receita bruta',
+      value: revenueCents,
+      delta: deltas.receita,
+      color: 'bg-emerald-500',
+    },
+    {
+      label: 'Despesas variáveis',
+      value: variableCents,
+      delta: deltas.variavel,
+      color: 'bg-amber-500',
+    },
+    {
+      label: 'Despesas fixas',
+      value: fixedCents,
+      delta: deltas.fixa,
+      color: 'bg-rose-500',
+    },
+    {
+      label: 'Resultado líquido',
+      value: netCents,
+      delta: deltas.net,
+      color: netCents >= 0 ? 'bg-sky-500' : 'bg-slate-400',
+    },
+  ];
+
+  return (
+    <Card className="bg-white border border-slate-200 shadow-sm">
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <div>
+            <CardTitle className="text-base font-semibold text-slate-900">
+              Pulso financeiro
+            </CardTitle>
+            <p className="text-sm text-slate-500">
+              Visão rápida de receita, custos e margem do período aplicado.
+            </p>
+          </div>
+          <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-sm font-semibold text-emerald-700">
+            {marginPercent >= 0 ? `Margem ${marginPercent.toFixed(1)}%` : 'Margem negativa'}
+          </div>
+        </div>
+        <div className="mt-2 text-xs text-slate-500">
+          Despesas totais: {formatCurrencyFromCents(totalCosts)} (
+          {revenueCents ? ((totalCosts / revenueCents) * 100).toFixed(1) : '0'}% da receita)
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {items.map((item) => (
+          <div key={item.label} className="space-y-2">
+            <div className="flex items-center justify-between text-sm">
+              <p className="font-medium text-slate-900">{item.label}</p>
+              <div className="flex items-center gap-2">
+                <span className="font-semibold text-slate-900">
+                  {formatCurrencyFromCents(item.value)}
+                </span>
+                <span
+                  className={`text-xs font-semibold ${
+                    item.delta >= 0 ? 'text-emerald-600' : 'text-rose-600'
+                  }`}
+                >
+                  {formatDeltaLabel(item.delta)}
+                </span>
+              </div>
+            </div>
+            <div className="h-2 w-full rounded-full bg-slate-100">
+              <div
+                className={`h-2 rounded-full ${item.color}`}
+                style={{ width: `${progress(Math.abs(item.value))}%` }}
+              />
+            </div>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  );
 }
 
 function parseMonth(value: string): Date {
@@ -284,20 +447,25 @@ const AdminDashboard = () => {
     enabled: Boolean(previousPeriodFilters && appliedFilters?.startDate && appliedFilters?.endDate),
   });
 
+  const normalizedFixedRange = useMemo(
+    () => normalizeMonthRange(appliedFilters?.startDate, appliedFilters?.endDate),
+    [appliedFilters?.startDate, appliedFilters?.endDate],
+  );
+
   const fixedExpensesQuery = useQuery<FixedExpenseRecord[]>({
     queryKey: [
       'admin-metrics-fixed-expenses',
       appliedFilters.storeId,
-      appliedFilters.startDate,
-      appliedFilters.endDate,
+      normalizedFixedRange?.start,
+      normalizedFixedRange?.end,
     ],
     queryFn: () =>
       fetchFixedExpenses({
         storeId: appliedFilters?.storeId ?? null,
-        startDate: appliedFilters?.startDate ?? '',
-        endDate: appliedFilters?.endDate ?? '',
+        startDate: normalizedFixedRange?.start ?? '',
+        endDate: normalizedFixedRange?.end ?? '',
       }),
-    enabled: Boolean(appliedFilters?.startDate && appliedFilters?.endDate),
+    enabled: Boolean(normalizedFixedRange),
   });
 
   const variableExpensesQuery = useQuery<VariableExpenseRecord[]>({
@@ -316,6 +484,30 @@ const AdminDashboard = () => {
         endDate: appliedFilters?.endDate ?? '',
       }),
     enabled: Boolean(appliedFilters?.startDate && appliedFilters?.endDate),
+  });
+
+  const previousFixedRange = useMemo(
+    () =>
+      previousPeriodFilters
+        ? normalizeMonthRange(previousPeriodFilters.startDate, previousPeriodFilters.endDate)
+        : null,
+    [previousPeriodFilters],
+  );
+
+  const previousFixedExpensesQuery = useQuery<FixedExpenseRecord[]>({
+    queryKey: [
+      'admin-metrics-fixed-expenses-prev',
+      previousPeriodFilters?.storeId,
+      previousFixedRange?.start,
+      previousFixedRange?.end,
+    ],
+    queryFn: () =>
+      fetchFixedExpenses({
+        storeId: previousPeriodFilters?.storeId ?? null,
+        startDate: previousFixedRange?.start ?? '',
+        endDate: previousFixedRange?.end ?? '',
+      }),
+    enabled: Boolean(previousPeriodFilters && previousFixedRange),
   });
 
   const serviceTypeMap = useMemo(() => {
@@ -414,17 +606,8 @@ const AdminDashboard = () => {
       }
     });
 
-    // Filtra caixas diários: remove os que são de meses que têm fechamento
-    const boxesToProcess = dailyBoxes.filter((box) => {
-      const storeId = box.store_id;
-      if (!storeId) return true;
-      const monthKey = monthKeyFrom(box.date);
-      const storeMonthKey = `${storeId}-${monthKey}`;
-      return !storeMonthClosureSet.has(storeMonthKey);
-    });
-
-    // Combina fechamentos mensais com caixas diários (apenas dos meses sem fechamento)
-    const allBoxes = [...monthlyClosures, ...boxesToProcess];
+    // Combina todos os caixas diários com os fechamentos mensais para somar os resultados
+    const allBoxes = [...monthlyClosures, ...dailyBoxes];
 
     const serviceAggregates = new Map<string, ServiceAggregate>();
     const storeAggregates = new Map<string, StoreAggregate>();
@@ -528,7 +711,8 @@ const AdminDashboard = () => {
       monthly.serviceQuantity += boxServiceQuantity;
     });
 
-    // Filtra despesas variáveis: se o mês tem fechamento, só conta despesas do fechamento
+    // Ajusta despesas variáveis: mesmo com fechamento mensal contamos os caixas diários
+    // e apenas ignoramos lançamentos do fechamento que duplicam contas fixas
     const variableExpensesToProcess = variableExpenses.filter((expense) => {
       const monthKey = monthKeyFrom(expense.cash_box.date);
       const storeMonthKey = `${expense.cash_box.store_id}-${monthKey}`;
@@ -537,7 +721,7 @@ const AdminDashboard = () => {
 
       const isClosureExpense =
         expense.cash_box.note && expense.cash_box.note.startsWith('Fechamento manual');
-      if (!isClosureExpense) return false;
+      if (!isClosureExpense) return true;
 
       const normalizedTitle = normalizeText(expense.title).trim();
       if (!normalizedTitle) return true;
@@ -744,6 +928,12 @@ const AdminDashboard = () => {
 
   const handleExportPdf = async () => {
     if (!exportRef.current) return;
+    const [{ default: html2canvas }, jsPDFModule] = await Promise.all([
+      import('html2canvas'),
+      import('jspdf'),
+    ]);
+    const jsPDF = jsPDFModule.default;
+
     const canvas = await html2canvas(exportRef.current, {
       scale: 2,
       backgroundColor: '#ffffff',
@@ -792,8 +982,19 @@ const AdminDashboard = () => {
       const expenses = box.cash_box_expenses ?? [];
       return sum + expenses.reduce((s, exp) => s + (exp.amount_cents ?? 0), 0);
     }, 0);
-    return { totalValueCents, totalQuantity, avgTicketCents, variableCents, netResultCents: totalValueCents - variableCents };
-  }, [previousCashBoxesQuery.data]);
+    const fixedCents = (previousFixedExpensesQuery.data ?? []).reduce(
+      (sum, expense) => sum + (expense.amount_cents ?? 0),
+      0,
+    );
+    return {
+      totalValueCents,
+      totalQuantity,
+      avgTicketCents,
+      variableCents,
+      fixedCents,
+      netResultCents: totalValueCents - variableCents - fixedCents,
+    };
+  }, [previousCashBoxesQuery.data, previousFixedExpensesQuery.data]);
 
   const kpiDeltas = useMemo(() => {
     return {
@@ -801,7 +1002,7 @@ const AdminDashboard = () => {
       faturamento_pct: calculateDelta(metrics.totalValueCents, previousMetrics.totalValueCents),
       ticketMedio_pct: calculateDelta(metrics.avgTicketCents, previousMetrics.avgTicketCents),
       variaveis_pct: calculateDelta(metrics.variableExpensesTotalCents, previousMetrics.variableCents),
-      fixas_pct: 0,
+      fixas_pct: calculateDelta(metrics.fixedExpensesTotalCents, previousMetrics.fixedCents ?? 0),
       resultado_pct: calculateDelta(metrics.netResultCents, previousMetrics.netResultCents),
     };
   }, [metrics, previousMetrics]);
@@ -1129,6 +1330,16 @@ const AdminDashboard = () => {
         >
           <Calendar className="h-5 w-5" />
           Fechamento Mensal
+        </button>
+        <button
+          onClick={() => {
+            navigate('/admin/contas-fixas');
+            if (isMobile) setSidebarOpen(false);
+          }}
+          className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
+        >
+          <ClipboardList className="h-5 w-5" />
+          Contas fixas
         </button>
         <button
           onClick={() => {
@@ -1473,39 +1684,58 @@ const AdminDashboard = () => {
               </div>
 
               <div className="grid gap-4 grid-cols-1 lg:grid-cols-2">
-                <DREVisual 
-                  data={{
-                    totalRevenueCents: metrics.totalValueCents,
-                    variableExpensesCents: metrics.variableExpensesTotalCents,
-                    fixedExpensesCents: metrics.fixedExpensesTotalCents,
-                    netResultCents: metrics.netResultCents,
+                <FinancialPulseCard
+                  revenueCents={metrics.totalValueCents}
+                  variableCents={metrics.variableExpensesTotalCents}
+                  fixedCents={metrics.fixedExpensesTotalCents}
+                  netCents={metrics.netResultCents}
+                  deltas={{
+                    receita: kpiDeltas.faturamento_pct,
+                    variavel: kpiDeltas.variaveis_pct,
+                    fixa: kpiDeltas.fixas_pct,
+                    net: kpiDeltas.resultado_pct,
                   }}
-                  title="DRE Visual - Fluxo Financeiro"
                 />
                 {waterfallData && (
-                  <ChartWaterfall 
-                    loja={waterfallData.loja} 
-                    etapas={waterfallData.etapas}
-                    title="Cascata de Receitas e Custos" 
-                  />
+                  <Suspense fallback={<ChartFallback label="Cascata de Receitas e Custos" />}>
+                    <ChartWaterfall
+                      loja={waterfallData.loja}
+                      etapas={waterfallData.etapas}
+                      title="Cascata de Receitas e Custos"
+                    />
+                  </Suspense>
                 )}
               </div>
 
               {marginChartData.length > 0 && (
                 <div className="grid gap-4 grid-cols-1 lg:grid-cols-2">
-                  <MarginBarChart 
-                    data={marginChartData}
-                    title="Margem em Reais por Dia"
-                  />
-                  <MarginPercentageChart 
-                    data={marginChartData}
-                    title="Margem Percentual sobre Faturamento"
-                  />
+                  <Suspense fallback={<ChartFallback label="Margem em Reais por Dia" />}>
+                    <MarginBarChart data={marginChartData} title="Margem em Reais por Dia" />
+                  </Suspense>
+                  <Suspense fallback={<ChartFallback label="Margem Percentual" />}>
+                    <MarginPercentageChart
+                      data={marginChartData}
+                      title="Margem Percentual sobre Faturamento"
+                    />
+                  </Suspense>
+                </div>
+              )}
+
+              {metrics.monthlyPerformance.length > 1 && (
+                <div className="grid gap-4">
+                  <Suspense fallback={<ChartFallback label="Tendência de resultado" />}>
+                    <FinancialTrendChart
+                      data={metrics.monthlyPerformance}
+                      title="Tendência financeira mensal"
+                    />
+                  </Suspense>
                 </div>
               )}
 
               <div className="grid gap-4 lg:grid-cols-1">
-                <ChartHeatmap data={heatmapData} title="Mapa de Calor: Volume de Vendas por Horário" />
+                <Suspense fallback={<ChartFallback label="Mapa de Calor" />}>
+                  <ChartHeatmap data={heatmapData} title="Mapa de Calor: Volume de Vendas por Horário" />
+                </Suspense>
               </div>
 
               <div className="grid gap-4 grid-cols-1 lg:grid-cols-2">
