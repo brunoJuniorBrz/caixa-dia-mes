@@ -290,6 +290,13 @@ export default function Historico() {
       const pageHeight = 297;
       const margin = 15;
       const contentWidth = pageWidth - (margin * 2);
+      const footerY = pageHeight - 15;
+      const ensureSpace = (requiredHeight: number) => {
+        if (y + requiredHeight > footerY) {
+          doc.addPage();
+          y = margin;
+        }
+      };
       
       // Header com gradiente
       doc.setFillColor(6, 182, 212); // Cyan
@@ -304,12 +311,7 @@ export default function Historico() {
       setFontSafe('normal');
       doc.text('Fechamento de Caixa Diário', pageWidth / 2, 27, { align: 'center' });
       
-      const dataFormatada = new Date(box.date).toLocaleDateString('pt-BR', { 
-        weekday: 'long', 
-        year: 'numeric', 
-        month: 'long', 
-        day: 'numeric' 
-      });
+      const dataFormatada = formatDate(box.date, "EEEE, dd 'de' MMMM 'de' yyyy");
       doc.setFontSize(10);
       doc.text(dataFormatada.charAt(0).toUpperCase() + dataFormatada.slice(1), pageWidth / 2, 35, { align: 'center' });
       
@@ -652,8 +654,10 @@ export default function Historico() {
       y += 13; // Espaçamento após total
       
       // Espaçamento entre seções (16px ≈ 5.6mm)
+      const balanceBlockHeight = 54;
+      const balanceFooterGap = 12; // reserva para não encostar no rodapé
+      ensureSpace(5.6 + balanceBlockHeight + balanceFooterGap);
       y += 5.6;
-      
       // ===== BALANÇO FINAL =====
       // Box principal com gradiente simulado
       doc.setFillColor(59, 130, 246); // Azul
@@ -714,13 +718,6 @@ export default function Historico() {
       setFontSafe('normal');
       doc.text(`Retornos: ${totals.returnCount}`, pageWidth / 2, y + 49, { align: 'center' });
       
-      // Verificar se precisa de nova página para o rodapé
-      const footerY = pageHeight - 15;
-      if (y + 20 > footerY) {
-        doc.addPage();
-        y = margin;
-      }
-      
       // Footer com linha decorativa
       doc.setDrawColor(200, 200, 200);
       doc.setLineWidth(0.3);
@@ -732,11 +729,7 @@ export default function Historico() {
       doc.text('TOP VISTORIAS - Sistema de Gestão de Caixa', margin, pageHeight - 10);
       
       setFontSafe('normal');
-      const dataGeracao = new Date(box.date).toLocaleDateString('pt-BR', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric'
-      });
+      const dataGeracao = formatDate(box.date, 'dd/MM/yyyy');
       doc.text(`Data do caixa: ${dataGeracao}`, pageWidth - margin, pageHeight - 10, { align: 'right' });
       
       // Salvar PDF
@@ -1280,5 +1273,3 @@ export default function Historico() {
     </>
   );
 }
-
-
