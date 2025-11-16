@@ -1,7 +1,7 @@
 import { supabase } from '@/integrations/supabase/client';
 import type { AppUser, ServiceType, Store } from '@/types/database';
 import { getServiceDefaultPrice } from '@/features/cash-box/utils';
-import { endOfMonth, format, parse } from 'date-fns';
+import { endOfMonth, format, parse, startOfMonth, eachDayOfInterval } from 'date-fns';
 import type {
   AdminFilters,
   CashBoxWithRelations,
@@ -264,18 +264,53 @@ function buildMonthlyClosureNote(month: string): string {
 function getMonthRange(month: string): { startDate: string; endDate: string } {
   const [year, monthPart] = month.split('-');
   if (!year || !monthPart) {
-    throw new Error('M�s inv�lido para fechamento mensal.');
+    throw new Error('M�s inv�lido para fechamento mensal.');
   }
 
   const baseDate = parse(`${month}-01`, 'yyyy-MM-dd', new Date());
   if (Number.isNaN(baseDate.getTime())) {
-    throw new Error('M�s inv�lido para fechamento mensal.');
+    throw new Error('M�s inv�lido para fechamento mensal.');
   }
 
   const startDate = format(baseDate, 'yyyy-MM-dd');
   const endDate = format(endOfMonth(baseDate), 'yyyy-MM-dd');
 
   return { startDate, endDate };
+}
+
+/**
+ * Encontra um domingo aleatório (mas determinístico) do mês para o fechamento mensal.
+ * O mesmo mês/ano sempre retornará o mesmo domingo.
+ * 
+ * @param month Mês no formato "yyyy-MM"
+ * @returns Data do domingo escolhido no formato "yyyy-MM-dd"
+ */
+function getRandomSundayOfMonth(month: string): string {
+  const baseDate = parse(`${month}-01`, 'yyyy-MM-dd', new Date());
+  if (Number.isNaN(baseDate.getTime())) {
+    throw new Error('Ms invlido para fechamento mensal.');
+  }
+
+  const start = startOfMonth(baseDate);
+  const end = endOfMonth(baseDate);
+  
+  // Encontra todos os domingos do mês (getDay() retorna 0 para domingo)
+  const allDays = eachDayOfInterval({ start, end });
+  const sundays = allDays.filter((day) => day.getDay() === 0);
+  
+  if (sundays.length === 0) {
+    // Se não houver domingo no mês (improvável), usa o último dia do mês
+    return format(end, 'yyyy-MM-dd');
+  }
+  
+  // Escolhe um domingo de forma determinística baseado no mês e ano
+  // Usa uma função hash simples para garantir que o mesmo mês/ano sempre escolha o mesmo domingo
+  const year = baseDate.getFullYear();
+  const monthNum = baseDate.getMonth() + 1; // getMonth() retorna 0-11
+  const hash = (year * 31 + monthNum * 17) % sundays.length;
+  const selectedSunday = sundays[Math.abs(hash)];
+  
+  return format(selectedSunday, 'yyyy-MM-dd');
 }
 
 async function fetchServiceTypesCatalog(): Promise<ServiceType[]> {
@@ -387,7 +422,7 @@ export async function upsertMonthlyClosure({
     .map((service) => {
       const serviceType = serviceTypeMap.get(service.service_type_id);
       if (!serviceType) {
-        console.warn(`Tipo de servi�o n�o encontrado: ${service.service_type_id}`);
+        console.warn(`Tipo de servi�o n�o encontrado: ${service.service_type_id}`);
         return null;
       }
       return {
@@ -424,12 +459,17 @@ export async function upsertMonthlyClosure({
 
   let cashBoxId = existingBox?.id ?? null;
 
+  // Usar um domingo aleatório (mas determinístico) do mês para o fechamento mensal.
+  // O mesmo mês/ano sempre usará o mesmo domingo, garantindo consistência.
+  // Isso evita conflitos com caixas diários e mantém os caixas fechados pelo sistema.
+  const closureDate = getRandomSundayOfMonth(month);
+
   if (!cashBoxId) {
     const { data: createdBox, error: createError } = await supabase
       .from('cash_boxes')
       .insert({
         store_id: storeId,
-        date: startDate,
+        date: closureDate,
         vistoriador_id: userId,
         note,
       })
@@ -437,7 +477,7 @@ export async function upsertMonthlyClosure({
       .single();
 
     if (createError || !createdBox) {
-      throw createError ?? new Error('N�o foi poss�vel criar o fechamento mensal.');
+      throw createError ?? new Error('N�o foi poss�vel criar o fechamento mensal.');
     }
 
     cashBoxId = createdBox.id;
@@ -445,7 +485,7 @@ export async function upsertMonthlyClosure({
     const { error: updateError } = await supabase
       .from('cash_boxes')
       .update({
-        date: startDate,
+        date: closureDate,
         vistoriador_id: userId,
         note,
       })

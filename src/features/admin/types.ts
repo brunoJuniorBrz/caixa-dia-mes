@@ -90,6 +90,7 @@ export interface MonthlyClosurePayload {
   services: Array<{
     service_type_id: string;
     quantity: number;
+    unit_price_cents: number;
   }>;
   expenses: MonthlyClosureExpenseEntry[];
 }

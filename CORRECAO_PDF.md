@@ -121,3 +121,6 @@ Após instalar as fontes, teste a geração de PDF e verifique:
 3. ✅ PDF funciona offline
 4. ✅ Fontes aparecem como embutidas nas propriedades do PDF
 
+
+
+

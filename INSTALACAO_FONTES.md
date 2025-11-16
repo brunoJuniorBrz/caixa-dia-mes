@@ -72,3 +72,6 @@ Você deve ver:
 
 O código está preparado para funcionar **mesmo sem as fontes** (usando Helvetica), mas os acentos podem aparecer incorretamente. Para garantir acentos perfeitos, instale as fontes Inter ou Roboto.
 
+
+
+

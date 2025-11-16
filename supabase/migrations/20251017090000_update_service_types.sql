@@ -1,6 +1,6 @@
 -- Ensure Pesquisa service type exists
 INSERT INTO public.service_types (code, name, default_price_cents, counts_in_gross)
-VALUES ('PESQUISA', 'Pesquisa', 0, true)
+VALUES ('PESQUISA', 'Pesquisa', 6000, true)
 ON CONFLICT (code) DO UPDATE
 SET
   name = EXCLUDED.name,

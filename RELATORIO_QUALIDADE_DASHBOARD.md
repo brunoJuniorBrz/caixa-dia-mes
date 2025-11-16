@@ -302,3 +302,6 @@ function calculateDeltaNormalized(
 **Analista**: Sistema de Análise Automatizada
 
 
+
+
+

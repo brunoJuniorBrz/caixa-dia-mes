@@ -4,14 +4,14 @@ import { Button } from "@/components/ui/button";
 
 const Index = () => {
   return (
-    <div className="relative h-screen overflow-hidden bg-[#0A7EA4]">
+    <div className="relative min-h-screen bg-[#0A7EA4]">
       {/* Glow effects */}
-      <div className="pointer-events-none absolute inset-0 overflow-hidden">
-        <div className="absolute -left-40 top-20 h-[500px] w-[500px] rounded-full bg-cyan-300/25 blur-[130px]" />
+      <div className="pointer-events-none fixed inset-0 overflow-hidden">
+        <div className="absolute left-0 top-20 h-[400px] w-[400px] rounded-full bg-cyan-300/15 blur-[120px]" />
         <div className="absolute -right-40 bottom-20 h-[500px] w-[500px] rounded-full bg-blue-300/20 blur-[130px]" />
       </div>
 
-      <div className="relative z-10 mx-auto flex h-screen max-w-7xl flex-col px-8 py-6">
+      <div className="relative z-10 mx-auto flex min-h-screen max-w-7xl flex-col px-8 py-6">
         {/* header */}
         <header className="flex items-center justify-between py-4">
           <Link to="/" className="group flex items-center gap-3 transition">
@@ -37,7 +37,7 @@ const Index = () => {
 
         {/* hero */}
         <main className="flex flex-1 flex-col justify-center space-y-10">
-          <section className="text-center">
+          <section className="text-center py-8">
             <h1 className="animate-fade-in text-5xl font-bold leading-tight text-white lg:text-6xl">
               Sistema de Gestão
               <br />
@@ -63,7 +63,7 @@ const Index = () => {
           </section>
 
           {/* feature cards */}
-          <section className="grid gap-6 md:grid-cols-3">
+          <section className="grid gap-6 md:grid-cols-3 py-8">
             <div className="group cursor-pointer rounded-2xl bg-white p-7 text-center shadow-xl transition-all duration-300 hover:-translate-y-2 hover:shadow-2xl">
               <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-xl bg-emerald-50 transition-all duration-300 group-hover:scale-110 group-hover:bg-emerald-100">
                 <BarChart3 className="h-8 w-8 text-emerald-600" />
@@ -96,7 +96,7 @@ const Index = () => {
           </section>
 
           {/* cta */}
-          <section className="rounded-2xl bg-[#0A6B8A] p-8 text-center shadow-2xl backdrop-blur-sm transition-all hover:shadow-2xl">
+          <section className="rounded-2xl bg-[#0A6B8A] p-8 text-center shadow-2xl backdrop-blur-sm transition-all hover:shadow-2xl mb-6">
             <h2 className="text-2xl font-bold text-white">Pronto para começar?</h2>
             <p className="mx-auto mt-3 max-w-2xl text-base text-cyan-50">
               Faça login e comece a gerenciar suas finanças de forma eficiente.
